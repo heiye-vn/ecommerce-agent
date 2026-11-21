@@ -1,0 +1,1759 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CommerceAgent 运营工作台 · DESIGN.md 风格原型</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%23000000'/%3E%3Ctext x='16' y='20' text-anchor='middle' fill='%23ffffff' font-family='ui-monospace,monospace' font-size='12' font-weight='600'%3ECA%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --primary: #000000;
+        --ink: #000000;
+        --on-primary: #ffffff;
+        --canvas-light: #ffffff;
+        --canvas-cream: #fbfbf5;
+        --hairline-light: #e4e4e7;
+        --shade-30: #d4d4d8;
+        --shade-40: #a1a1aa;
+        --shade-50: #71717a;
+        --shade-60: #52525b;
+        --shade-70: #3f3f46;
+        --aloe-10: #c1fbd4;
+        --pistachio-10: #d4f9e0;
+
+        --radius-xs: 4px;
+        --radius-sm: 5px;
+        --radius-md: 8px;
+        --radius-lg: 12px;
+        --radius-xl: 20px;
+        --radius-pill: 9999px;
+
+        --shadow-level-3:
+          0 8px 8px rgba(0, 0, 0, 0.06),
+          0 4px 4px rgba(0, 0, 0, 0.05),
+          0 2px 2px rgba(0, 0, 0, 0.05),
+          0 0 0 1px rgba(0, 0, 0, 0.06);
+
+        --font-display:
+          "NeueHaasGrotesk Display", "Helvetica Neue", "Inter", "PingFang SC", Helvetica, Arial,
+          sans-serif;
+        --font-ui:
+          "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial,
+          sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--canvas-cream);
+        color: var(--ink);
+        font-family: var(--font-ui);
+        font-size: 15px;
+        font-weight: 420;
+        line-height: 1.5;
+        font-feature-settings: "ss03" 1;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button,
+      input {
+        font-family: inherit;
+        font-feature-settings: "ss03" 1;
+      }
+
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid var(--ink);
+        outline-offset: 2px;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .app {
+        min-width: 1280px;
+        min-height: 100vh;
+        background: var(--canvas-cream);
+      }
+
+      /* Top Bar (nav-bar-light) */
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        height: 64px;
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 0 24px;
+        background: var(--canvas-light);
+        border-bottom: 1px solid var(--hairline-light);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+
+      .brand-mark {
+        width: 28px;
+        height: 28px;
+        border-radius: var(--radius-pill);
+        background: var(--primary);
+        color: var(--on-primary);
+        display: grid;
+        place-items: center;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 550;
+        letter-spacing: 0.4px;
+      }
+
+      .brand-name {
+        font-family: var(--font-display);
+        font-size: 18px;
+        font-weight: 500;
+        letter-spacing: 0.3px;
+        color: var(--ink);
+      }
+
+      .brand-divider {
+        width: 1px;
+        height: 16px;
+        background: var(--hairline-light);
+      }
+
+      .brand-sub {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--shade-50);
+      }
+
+      .search-box {
+        width: 340px;
+        height: 38px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 12px;
+        background: var(--canvas-light);
+        border: 1px solid var(--hairline-light);
+        border-radius: var(--radius-md);
+        transition: border-color 140ms ease;
+      }
+
+      .search-box:focus-within {
+        border-color: var(--ink);
+      }
+
+      .search-icon {
+        width: 15px;
+        height: 15px;
+        color: var(--shade-40);
+        flex-shrink: 0;
+      }
+
+      .search-box input {
+        flex: 1;
+        min-width: 0;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--ink);
+        font-size: 13px;
+      }
+
+      .search-box input::placeholder {
+        color: var(--shade-40);
+      }
+
+      .search-kbd {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--shade-50);
+        padding: 2px 6px;
+        border: 1px solid var(--hairline-light);
+        border-radius: var(--radius-xs);
+        background: var(--canvas-cream);
+      }
+
+      .top-actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .shop-chip {
+        height: 34px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 14px;
+        background: var(--canvas-light);
+        border: 1px solid var(--hairline-light);
+        border-radius: var(--radius-pill);
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--ink);
+        white-space: nowrap;
+      }
+
+      .shop-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: var(--radius-pill);
+        background: var(--aloe-10);
+        border: 1px solid var(--ink);
+      }
+
+      .operator-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding-left: 4px;
+      }
+
+      .operator-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: var(--radius-pill);
+        background: var(--primary);
+        color: var(--on-primary);
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        font-weight: 550;
+      }
+
+      .operator-meta {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+      }
+
+      .operator-name {
+        font-size: 13px;
+        font-weight: 550;
+        color: var(--ink);
+      }
+
+      .operator-role {
+        font-size: 11px;
+        color: var(--shade-50);
+      }
+
+      /* Shell Layout */
+      .shell {
+        display: grid;
+        grid-template-columns: 232px minmax(0, 1fr);
+        min-height: calc(100vh - 64px);
+      }
+
+      /* Sidebar on Cream Canvas */
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        padding: 20px 14px 18px;
+        background: var(--canvas-cream);
+        border-right: 1px solid var(--hairline-light);
+      }
+
+      .nav-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .nav-section {
+        margin: 20px 12px 6px;
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.2;
+        letter-spacing: 0.72px;
+        color: var(--shade-50);
+        text-transform: uppercase;
+      }
+
+      .nav-item {
+        width: 100%;
+        height: 38px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 0 14px;
+        border: 1px solid transparent;
+        border-radius: var(--radius-pill);
+        background: transparent;
+        color: var(--shade-60);
+        font-size: 14px;
+        font-weight: 500;
+        text-align: left;
+        cursor: pointer;
+        transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+      }
+
+      .nav-item:hover {
+        background: var(--canvas-light);
+        border-color: var(--hairline-light);
+        color: var(--ink);
+      }
+
+      .nav-item[aria-current="page"] {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: var(--on-primary);
+        font-weight: 550;
+      }
+
+      .nav-item[disabled] {
+        opacity: 0.56;
+        cursor: default;
+      }
+
+      .nav-item[disabled]:hover {
+        background: transparent;
+        border-color: transparent;
+        color: var(--shade-60);
+      }
+
+      .nav-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 22px;
+        height: 20px;
+        padding: 0 7px;
+        border-radius: var(--radius-pill);
+        background: var(--aloe-10);
+        color: var(--ink);
+        font-size: 11px;
+        font-weight: 550;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .nav-count-neutral {
+        background: var(--shade-30);
+      }
+
+      .nav-item[aria-current="page"] .nav-count {
+        background: var(--aloe-10);
+        color: var(--ink);
+      }
+
+      .sidebar-foot {
+        margin-top: auto;
+        padding: 14px;
+        background: var(--canvas-light);
+        border: 1px solid var(--hairline-light);
+        border-radius: var(--radius-lg);
+      }
+
+      .sidebar-foot-label {
+        font-size: 12px;
+        letter-spacing: 0.72px;
+        color: var(--shade-50);
+        margin-bottom: 6px;
+      }
+
+      .sidebar-foot-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 12px;
+        color: var(--shade-60);
+        padding: 2px 0;
+      }
+
+      .sidebar-foot-row code {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--ink);
+      }
+
+      /* Main Content */
+      .main {
+        min-width: 0;
+        padding: 24px 28px 32px;
+      }
+
+      .view-panel {
+        display: none;
+      }
+
+      .view-panel.active {
+        display: block;
+      }
+
+      .workspace-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 392px;
+        gap: 24px;
+        align-items: start;
+      }
+
+      /* Cards */
+      .card {
+        min-width: 0;
+        background: var(--canvas-light);
+        border: 1px solid var(--hairline-light);
+        border-radius: var(--radius-lg);
+      }
+
+      .card-elevated {
+        box-shadow: var(--shadow-level-3);
+        border-color: rgba(0, 0, 0, 0.08);
+      }
+
+      .card-head {
+        min-height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 24px;
+        border-bottom: 1px solid var(--hairline-light);
+      }
+
+      .card-head-compact {
+        min-height: 54px;
+        padding: 12px 20px;
+      }
+
+      .card-title {
+        font-family: var(--font-display);
+        font-size: 20px;
+        font-weight: 500;
+        line-height: 1.3;
+        letter-spacing: 0.3px;
+        color: var(--ink);
+        margin: 0;
+      }
+
+      .card-title-sm {
+        font-family: var(--font-display);
+        font-size: 16px;
+        font-weight: 500;
+        line-height: 1.3;
+        letter-spacing: 0.2px;
+        color: var(--ink);
+        margin: 0;
+      }
+
+      .card-meta {
+        margin-top: 3px;
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: -0.13px;
+        color: var(--shade-50);
+      }
+
+      .card-meta code {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--shade-70);
+      }
+
+      /* Pill Tags (pill-tag-mint / pill-tag-shade) */
+      .pill-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 24px;
+        padding: 4px 12px;
+        border-radius: var(--radius-pill);
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.2;
+        letter-spacing: 0.4px;
+        color: var(--ink);
+        white-space: nowrap;
+      }
+
+      .pill-tag-mint {
+        background: var(--aloe-10);
+      }
+
+      .pill-tag-pistachio {
+        background: var(--pistachio-10);
+      }
+
+      .pill-tag-shade {
+        background: var(--shade-30);
+      }
+
+      .pill-tag-outline {
+        background: var(--canvas-light);
+        border: 1px solid var(--hairline-light);
+        color: var(--shade-70);
+      }
+
+      .mono {
+        font-family: var(--font-mono);
+        letter-spacing: 0;
+      }
+
+      /* Buttons (strictly pill-shaped per DESIGN.md) */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        height: 40px;
+        padding: 0 22px;
+        border-radius: var(--radius-pill);
+        font-size: 14px;
+        font-weight: 500;
+        line-height: 1;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+      }
+
+      .btn-sm {
+        height: 32px;
+        padding: 0 14px;
+        font-size: 13px;
+      }
+
+      .btn-primary {
+        background: var(--primary);
+        color: var(--on-primary);
+        border: 1px solid var(--primary);
+      }
+
+      .btn-primary:hover {
+        background: var(--shade-70);
+        border-color: var(--shade-70);
+      }
+
+      .btn-primary:active {
+        background: var(--shade-60);
+      }
+
+      .btn-outline {
+        background: var(--canvas-light);
+        color: var(--ink);
+        border: 1px solid var(--ink);
+      }
+
+      .btn-outline:hover {
+        background: var(--canvas-cream);
+      }
+
+      .btn-outline-subtle {
+        background: var(--canvas-light);
+        color: var(--ink);
+        border: 1px solid var(--shade-30);
+      }
+
+      .btn-outline-subtle:hover {
+        border-color: var(--ink);
+        background: var(--canvas-cream);
+      }
+
+      .btn-aloe {
+        background: var(--aloe-10);
+        color: var(--ink);
+        border: 1px solid var(--aloe-10);
+        font-weight: 550;
+      }
+
+      .btn-aloe:hover {
+        background: var(--pistachio-10);
+        border-color: var(--ink);
+      }
+
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      /* Chat Panel */
+      .chat-card {
+        display: flex;
+        flex-direction: column;
+        min-height: 752px;
+      }
+
+      .chat-messages {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        padding: 24px;
+      }
+
+      .msg-user {
+        align-self: flex-end;
+        max-width: 78%;
+        padding: 13px 18px;
+        background: var(--primary);
+        color: var(--on-primary);
+        border-radius: 20px 20px 4px 20px;
+        font-size: 14px;
+        font-weight: 420;
+        line-height: 1.55;
+      }
+
+      .msg-agent {
+        align-self: stretch;
+        padding: 22px 24px;
+        background: var(--canvas-cream);
+        border: 1px solid var(--hairline-light);
+        border-radius: var(--radius-lg);
+      }
+
+      .msg-agent-simple {
+        max-width: 86%;
+        padding: 14px 18px;
+        background: var(--canvas-cream);
+        border: 1px solid var(--hairline-light);
+        border-radius: 4px 16px 16px 16px;
+        font-size: 14px;
+        color: var(--ink);
+      }
+
+      .proposal-eyebrow-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .eyebrow-text {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 400;
+        line-height: 1.2;
+        letter-spacing: 0.72px;
+        color: var(--shade-50);
+        text-transform: uppercase;
+      }
+
+      .proposal-lead {
+        margin: 0 0 18px;
+        font-size: 15px;
+        font-weight: 420;
+        line-height: 1.55;
+        color: var(--ink);
+      }
+
+      /* Signature Pistachio Hero Band (card-pistachio-band + display-md weight 330) */
+      .pistachio-band {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 20px 24px;
+        background: var(--pistachio-10);
+        border-radius: var(--radius-lg);
+        margin-bottom: 16px;
+      }
+
+      .price-block-label {
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.5px;
+        color: var(--shade-60);
+        margin-bottom: 6px;
+      }
+
+      .price-hero-row {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+      }
+
+      .price-display {
+        font-family: var(--font-display);
+        font-size: 48px;
+        font-weight: 330;
+        line-height: 1.05;
+        letter-spacing: 0;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .price-origin {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--shade-60);
+        text-decoration: line-through;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .discount-pill {
+        display: inline-flex;
+        align-items: center;
+        height: 24px;
+        padding: 0 10px;
+        border-radius: var(--radius-pill);
+        background: var(--primary);
+        color: var(--on-primary);
+        font-size: 12px;
+        font-weight: 550;
+      }
+
+      .window-block {
+        text-align: right;
+        padding-left: 20px;
+        border-left: 1px solid rgba(0, 0, 0, 0.14);
+      }
+
+      .window-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--shade-60);
+        margin-bottom: 4px;
+      }
+
+      .window-range {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--ink);
+        line-height: 1.45;
+      }
+
+      .window-sub {
+        margin-top: 3px;
+        font-size: 12px;
+        color: var(--shade-60);
+      }
+
+      /* Hairline Factual Evidence Grid */
+      .evidence-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 1px;
+        background: var(--hairline-light);
+        border: 1px solid var(--hairline-light);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        margin-bottom: 14px;
+      }
+
+      .evidence-cell {
+        background: var(--canvas-light);
+        padding: 12px 14px;
+      }
+
+      .evidence-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--shade-50);
+        margin-bottom: 4px;
+      }
+
+      .evidence-value {
+        font-family: var(--font-display);
+        font-size: 20px;
+        font-weight: 500;
+        line-height: 1.25;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .evidence-note {
+        margin-top: 3px;
+        font-size: 11px;
+        color: var(--shade-50);
+      }
+
+      .guard-bar {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 10px 14px;
+        background: var(--canvas-light);
+        border: 1px solid var(--hairline-light);
+        border-radius: var(--radius-md);
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--shade-60);
+      }
+
+      .guard-tag {
+        flex-shrink: 0;
+        margin-top: 1px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 550;
+        padding: 2px 7px;
+        border-radius: var(--radius-pill);
+        background: var(--shade-30);
+        color: var(--ink);
+      }
+
+      .proposal-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 18px;
+        padding-top: 16px;
+        border-top: 1px solid var(--hairline-light);
+      }
+
+      .action-buttons {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .proposal-status {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--shade-50);
+      }
+
+      /* Composer */
+      .composer {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 24px;
+        border-top: 1px solid var(--hairline-light);
+        background: var(--canvas-light);
+        border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+      }
+
+      .composer input {
+        flex: 1;
+        height: 44px;
+        padding: 0 14px;
+        background: var(--canvas-light);
+        border: 1px solid var(--hairline-light);
+        border-radius: var(--radius-md);
+        color: var(--ink);
+        font-size: 14px;
+        transition: border-color 140ms ease;
+      }
+
+      .composer input:focus {
+        border-color: var(--ink);
+      }
+
+      .composer input::placeholder {
+        color: var(--shade-40);
+      }
+
+      /* Right Rail */
+      .rail {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      .approval-list {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .approval-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--hairline-light);
+      }
+
+      .approval-row:last-child {
+        border-bottom: 0;
+      }
+
+      .type-chip {
+        width: 32px;
+        height: 32px;
+        border-radius: var(--radius-pill);
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        font-weight: 550;
+        color: var(--ink);
+        flex-shrink: 0;
+      }
+
+      .type-chip-promo {
+        background: var(--aloe-10);
+      }
+
+      .type-chip-refund {
+        background: var(--shade-30);
+      }
+
+      .approval-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .approval-title {
+        font-size: 14px;
+        font-weight: 550;
+        color: var(--ink);
+        line-height: 1.3;
+      }
+
+      .approval-meta {
+        margin-top: 2px;
+        font-size: 12px;
+        color: var(--shade-50);
+      }
+
+      /* Timeline */
+      .timeline-body {
+        padding: 16px 20px 20px;
+      }
+
+      .timeline {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .step {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 8px 10px;
+        border-radius: var(--radius-md);
+      }
+
+      .step::after {
+        content: "";
+        position: absolute;
+        left: 21px;
+        top: 34px;
+        bottom: -14px;
+        width: 1px;
+        background: var(--hairline-light);
+      }
+
+      .step:last-child::after {
+        display: none;
+      }
+
+      .step.active-step {
+        background: var(--canvas-cream);
+        border: 1px solid var(--hairline-light);
+      }
+
+      .step-marker {
+        position: relative;
+        z-index: 1;
+        width: 24px;
+        height: 24px;
+        border-radius: var(--radius-pill);
+        display: grid;
+        place-items: center;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 550;
+        flex-shrink: 0;
+        background: var(--canvas-light);
+        border: 1px solid var(--shade-30);
+        color: var(--shade-50);
+      }
+
+      .step.done .step-marker {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: var(--on-primary);
+      }
+
+      .step.active-step .step-marker {
+        background: var(--aloe-10);
+        border: 2px solid var(--ink);
+        color: var(--ink);
+      }
+
+      .step-title {
+        font-size: 14px;
+        font-weight: 550;
+        color: var(--ink);
+        line-height: 1.3;
+      }
+
+      .step-meta {
+        margin-top: 2px;
+        font-size: 12px;
+        color: var(--shade-50);
+        line-height: 1.45;
+      }
+
+      .step-meta.mono-meta {
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        color: var(--shade-60);
+      }
+
+      .timeline-notice {
+        margin-top: 16px;
+        padding: 12px 14px;
+        background: var(--canvas-cream);
+        border: 1px solid var(--hairline-light);
+        border-radius: var(--radius-md);
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--shade-60);
+      }
+
+      /* Secondary Table Views */
+      .view-header {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .view-title {
+        font-family: var(--font-display);
+        font-size: 28px;
+        font-weight: 500;
+        line-height: 1.25;
+        letter-spacing: 0.42px;
+        margin: 0;
+      }
+
+      .view-subtitle {
+        margin: 4px 0 0;
+        font-size: 14px;
+        color: var(--shade-50);
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      thead th {
+        padding: 12px 20px;
+        background: var(--canvas-cream);
+        border-bottom: 1px solid var(--hairline-light);
+        color: var(--shade-50);
+        text-align: left;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.6px;
+      }
+
+      tbody td {
+        padding: 15px 20px;
+        border-bottom: 1px solid var(--hairline-light);
+        color: var(--ink);
+        vertical-align: middle;
+        font-variant-numeric: tabular-nums;
+      }
+
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
+
+      tbody tr:hover td {
+        background: var(--canvas-cream);
+      }
+
+      .table-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      /* Subtle Live Status Banner */
+      .live-banner {
+        position: fixed;
+        right: 28px;
+        bottom: 24px;
+        z-index: 40;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 18px;
+        background: var(--primary);
+        color: var(--on-primary);
+        border-radius: var(--radius-pill);
+        font-size: 13px;
+        font-weight: 500;
+        opacity: 0;
+        transform: translateY(8px);
+        pointer-events: none;
+        transition: opacity 160ms ease, transform 160ms ease;
+      }
+
+      .live-banner.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .live-banner-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: var(--radius-pill);
+        background: var(--aloe-10);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">CA</span>
+          <span class="brand-name">CommerceAgent</span>
+          <span class="brand-divider" aria-hidden="true"></span>
+          <span class="brand-sub">电商运营工作台</span>
+        </div>
+
+        <div class="search-box">
+          <label class="sr-only" for="global-search">搜索 SKU、订单、促销或任务</label>
+          <svg
+            class="search-icon"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            aria-hidden="true"
+          >
+            <circle cx="9" cy="9" r="6" />
+            <path d="M13.5 13.5L17 17" stroke-linecap="round" />
+          </svg>
+          <input id="global-search" type="search" placeholder="搜索 SKU、订单、促销或任务" />
+          <span class="search-kbd">⌘K</span>
+        </div>
+
+        <div class="top-actions">
+          <div class="shop-chip" title="当前租户店铺上下文">
+            <span class="shop-dot" aria-hidden="true"></span>
+            杭州旗舰店
+          </div>
+
+          <div class="operator-badge">
+            <div class="operator-avatar" aria-hidden="true">张</div>
+            <div class="operator-meta">
+              <span class="operator-name">张运营</span>
+              <span class="operator-role">店铺运营</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="shell">
+        <aside class="sidebar" aria-label="主导航">
+          <nav class="nav-group">
+            <button type="button" class="nav-item" data-view="workspace" aria-current="page">
+              <span>Agent 对话</span>
+            </button>
+            <button type="button" class="nav-item" data-view="promotions">
+              <span>促销管理</span>
+              <span class="nav-count nav-count-neutral">8</span>
+            </button>
+            <button type="button" class="nav-item" data-view="approvals">
+              <span>审批中心</span>
+              <span class="nav-count" id="nav-approval-count">2</span>
+            </button>
+            <button type="button" class="nav-item" data-view="tasks">
+              <span>任务中心</span>
+              <span class="nav-count nav-count-neutral">1</span>
+            </button>
+          </nav>
+
+          <div class="nav-section">业务</div>
+          <div class="nav-group">
+            <button type="button" class="nav-item" disabled><span>商品运营</span></button>
+            <button type="button" class="nav-item" disabled><span>订单售后</span></button>
+            <button type="button" class="nav-item" disabled><span>经营分析</span></button>
+          </div>
+
+          <div class="nav-section">治理</div>
+          <div class="nav-group">
+            <button type="button" class="nav-item" disabled><span>知识库</span></button>
+            <button type="button" class="nav-item" disabled><span>审计日志</span></button>
+          </div>
+
+          <div class="sidebar-foot" aria-label="沙箱环境信息">
+            <div class="sidebar-foot-label">SANDBOX CONTEXT</div>
+            <div class="sidebar-foot-row">
+              <span>业务日期</span>
+              <code>2026-11-21</code>
+            </div>
+            <div class="sidebar-foot-row">
+              <span>店铺时区</span>
+              <code>Asia/Shanghai</code>
+            </div>
+            <div class="sidebar-foot-row">
+              <span>执行模式</span>
+              <code>审批门控</code>
+            </div>
+          </div>
+        </aside>
+
+        <main class="main">
+          <!-- View 1: Agent 对话 -->
+          <section class="view-panel active" id="view-workspace" aria-label="Agent 工作台">
+            <div class="workspace-grid">
+              <div class="card card-elevated chat-card">
+                <div class="card-head">
+                  <div>
+                    <h1 class="card-title">Agent 对话</h1>
+                    <div class="card-meta">
+                      会话 <code>S-20261121-001</code> · 当前店铺：杭州旗舰店
+                    </div>
+                  </div>
+                  <span class="pill-tag pill-tag-mint">只读分析 + 方案生成</span>
+                </div>
+
+                <div class="chat-messages" id="chat-messages">
+                  <div class="msg-user">
+                    帮我看看 SKU-001 最近 7 天销量，库存够的话创建 8 折促销，从 11 月 22 日开始持续 3 天。
+                  </div>
+
+                  <article class="msg-agent" aria-label="促销执行方案卡片">
+                    <div class="proposal-eyebrow-row">
+                      <span class="eyebrow-text">PROMOTION PROPOSAL · V1 · SKU-001</span>
+                      <span class="pill-tag pill-tag-mint">规则校验通过 · 0 冲突</span>
+                    </div>
+
+                    <p class="proposal-lead">
+                      已基于本店数据库事实生成促销方案。执行前必须经过人工审批；批准后后端将在事务内锁行并重新校验最新售价、SKU 状态、库存门槛与时段冲突。
+                    </p>
+
+                    <div class="pistachio-band">
+                      <div>
+                        <div class="price-block-label">后端重算促销价 · 冬季暖饮专场</div>
+                        <div class="price-hero-row">
+                          <span class="price-display">¥159.20</span>
+                          <span class="price-origin">¥199.00</span>
+                          <span class="discount-pill">8.0 折</span>
+                        </div>
+                      </div>
+                      <div class="window-block">
+                        <div class="window-label">活动时段（Asia/Shanghai）</div>
+                        <div class="window-range">2026-11-22 00:00 → 11-25 00:00</div>
+                        <div class="window-sub">含开始、不含结束 · 覆盖 22、23、24 日</div>
+                      </div>
+                    </div>
+
+                    <div class="evidence-strip" role="list" aria-label="数据库核验依据">
+                      <div class="evidence-cell" role="listitem">
+                        <div class="evidence-label">近 7 天销量</div>
+                        <div class="evidence-value">120 件</div>
+                        <div class="evidence-note">11/14–11/21 支付口径</div>
+                      </div>
+                      <div class="evidence-cell" role="listitem">
+                        <div class="evidence-label">可售库存</div>
+                        <div class="evidence-value">300 件</div>
+                        <div class="evidence-note">门槛 ≥ 100 件 · 充足</div>
+                      </div>
+                      <div class="evidence-cell" role="listitem">
+                        <div class="evidence-label">当前售价</div>
+                        <div class="evidence-value">¥199.00</div>
+                        <div class="evidence-note">实时读取 skus 表</div>
+                      </div>
+                      <div class="evidence-cell" role="listitem">
+                        <div class="evidence-label">冲突活动</div>
+                        <div class="evidence-value">0 个</div>
+                        <div class="evidence-note">同店同 SKU 无重叠</div>
+                      </div>
+                    </div>
+
+                    <div class="guard-bar">
+                      <span class="guard-tag">执行约束</span>
+                      <span>
+                        缺少开始日期时 Agent 会主动追问，不会自行推断；重复确认同一版本仅返回原审批单，不重复建单。
+                      </span>
+                    </div>
+
+                    <div class="proposal-actions">
+                      <div class="action-buttons">
+                        <button type="button" class="btn btn-primary" id="submit-approval-btn">
+                          提交审批
+                        </button>
+                        <button type="button" class="btn btn-outline" id="revise-plan-btn">
+                          修改方案
+                        </button>
+                      </div>
+                      <span class="proposal-status" id="proposal-status">待运营确认 · V1</span>
+                    </div>
+                  </article>
+                </div>
+
+                <form class="composer" id="chat-form">
+                  <label class="sr-only" for="chat-input">输入运营目标或追问依据</label>
+                  <input
+                    id="chat-input"
+                    type="text"
+                    placeholder="输入运营目标，或让 Agent 解释销量口径、库存与冲突依据…"
+                    autocomplete="off"
+                  />
+                  <button type="submit" class="btn btn-primary">发送</button>
+                </form>
+              </div>
+
+              <aside class="rail" aria-label="审批与任务状态">
+                <div class="card">
+                  <div class="card-head card-head-compact">
+                    <h2 class="card-title-sm">待审批方案</h2>
+                    <span class="pill-tag pill-tag-mint" id="rail-approval-badge">2 个待处理</span>
+                  </div>
+                  <div class="approval-list">
+                    <div class="approval-row">
+                      <span class="type-chip type-chip-promo" aria-hidden="true">促</span>
+                      <div class="approval-info">
+                        <div class="approval-title">SKU-001 8 折促销</div>
+                        <div class="approval-meta">张运营申请 · 预计 ¥159.20 · 11/22 开始</div>
+                      </div>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-subtle"
+                        data-jump-view="approvals"
+                      >
+                        查看
+                      </button>
+                    </div>
+                    <div class="approval-row">
+                      <span class="type-chip type-chip-refund" aria-hidden="true">退</span>
+                      <div class="approval-info">
+                        <div class="approval-title">订单 R-882 退款</div>
+                        <div class="approval-meta">李客服申请 · ¥89.00 · 待复核支付状态</div>
+                      </div>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-subtle"
+                        data-jump-view="approvals"
+                      >
+                        查看
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="card">
+                  <div class="card-head card-head-compact">
+                    <h2 class="card-title-sm">任务详情</h2>
+                    <span class="pill-tag pill-tag-shade mono">T-1024</span>
+                  </div>
+                  <div class="timeline-body">
+                    <div class="timeline">
+                      <div class="step done">
+                        <div class="step-marker">1</div>
+                        <div>
+                          <div class="step-title">数据查询</div>
+                          <div class="step-meta mono-meta">
+                            get_sales_stats / get_inventory / check_promotion_conflicts
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="step done">
+                        <div class="step-marker">2</div>
+                        <div>
+                          <div class="step-title">方案生成</div>
+                          <div class="step-meta">保存 data_snapshot，促销价由后端计算</div>
+                        </div>
+                      </div>
+
+                      <div class="step active-step">
+                        <div class="step-marker">3</div>
+                        <div>
+                          <div class="step-title">等待审批</div>
+                          <div class="step-meta">审批人：王审批 · 申请人与审批人不能相同</div>
+                        </div>
+                      </div>
+
+                      <div class="step">
+                        <div class="step-marker">4</div>
+                        <div>
+                          <div class="step-title">任务执行</div>
+                          <div class="step-meta">审批通过后锁行重校验 SKU、价格与冲突</div>
+                        </div>
+                      </div>
+
+                      <div class="step">
+                        <div class="step-marker">5</div>
+                        <div>
+                          <div class="step-title">排期生效</div>
+                          <div class="step-meta">Scheduler 扫描写入 Outbox：scheduled → active</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="timeline-notice">
+                      重复提交由幂等键拦截；临时失败走 RabbitMQ 退避重试，超过上限进入 DLQ，业务冲突转为人工处理。
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <!-- View 2: 促销管理 -->
+          <section class="view-panel" id="view-promotions" aria-label="促销管理">
+            <div class="view-header">
+              <div>
+                <h1 class="view-title">促销管理</h1>
+                <p class="view-subtitle">杭州旗舰店 · 仅展示当前租户店铺活动与版本排期</p>
+              </div>
+              <span class="pill-tag pill-tag-shade">8 个活动</span>
+            </div>
+            <div class="card">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>活动名称</th>
+                      <th>SKU</th>
+                      <th>原价</th>
+                      <th>促销价</th>
+                      <th>活动时段</th>
+                      <th>状态</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>冬季暖饮专场</td>
+                      <td class="mono">SKU-001</td>
+                      <td>¥199.00</td>
+                      <td><strong>¥159.20</strong></td>
+                      <td class="mono">11/22 00:00 – 11/25 00:00</td>
+                      <td><span class="pill-tag pill-tag-outline">已排期</span></td>
+                      <td>
+                        <button type="button" class="btn btn-sm btn-outline-subtle">详情</button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>冬季暖饮专场</td>
+                      <td class="mono">SKU-002</td>
+                      <td>¥99.00</td>
+                      <td><strong>¥79.20</strong></td>
+                      <td class="mono">11/22 00:00 – 11/25 00:00</td>
+                      <td><span class="pill-tag pill-tag-shade">待审批</span></td>
+                      <td>
+                        <button type="button" class="btn btn-sm btn-outline-subtle">详情</button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>新品试用活动</td>
+                      <td class="mono">SKU-018</td>
+                      <td>¥350.00</td>
+                      <td><strong>¥299.00</strong></td>
+                      <td class="mono">11/18 00:00 – 11/21 00:00</td>
+                      <td><span class="pill-tag pill-tag-mint">生效中</span></td>
+                      <td>
+                        <button type="button" class="btn btn-sm btn-outline-subtle">详情</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- View 3: 审批中心 -->
+          <section class="view-panel" id="view-approvals" aria-label="审批中心">
+            <div class="view-header">
+              <div>
+                <h1 class="view-title">审批中心</h1>
+                <p class="view-subtitle">高风险写操作统一门控 · 拒绝自审、跨店审批与重复裁决</p>
+              </div>
+              <span class="pill-tag pill-tag-mint" id="table-approval-badge">2 个待审批</span>
+            </div>
+            <div class="card">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>审批单</th>
+                      <th>操作类型</th>
+                      <th>申请人</th>
+                      <th>业务对象</th>
+                      <th>快照金额</th>
+                      <th>状态</th>
+                      <th>裁决</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr data-approval-id="APR-20261121-01">
+                      <td class="mono">APR-20261121-01</td>
+                      <td>促销发布</td>
+                      <td>张运营</td>
+                      <td class="mono">SKU-001 (V1)</td>
+                      <td><strong>¥159.20</strong></td>
+                      <td class="status-cell">
+                        <span class="pill-tag pill-tag-shade">待审批</span>
+                      </td>
+                      <td>
+                        <div class="table-actions">
+                          <button type="button" class="btn btn-sm btn-primary" data-decide="approve">
+                            通过
+                          </button>
+                          <button type="button" class="btn btn-sm btn-outline" data-decide="reject">
+                            驳回
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr data-approval-id="APR-20261121-02">
+                      <td class="mono">APR-20261121-02</td>
+                      <td>订单退款</td>
+                      <td>李客服</td>
+                      <td class="mono">订单 R-882</td>
+                      <td><strong>¥89.00</strong></td>
+                      <td class="status-cell">
+                        <span class="pill-tag pill-tag-shade">待审批</span>
+                      </td>
+                      <td>
+                        <div class="table-actions">
+                          <button type="button" class="btn btn-sm btn-primary" data-decide="approve">
+                            通过
+                          </button>
+                          <button type="button" class="btn btn-sm btn-outline" data-decide="reject">
+                            驳回
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- View 4: 任务中心 -->
+          <section class="view-panel" id="view-tasks" aria-label="任务中心">
+            <div class="view-header">
+              <div>
+                <h1 class="view-title">任务中心</h1>
+                <p class="view-subtitle">PostgreSQL Outbox + RabbitMQ 可靠异步任务与重试观测</p>
+              </div>
+              <span class="pill-tag pill-tag-mint">1 个执行中</span>
+            </div>
+            <div class="card">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>任务编号</th>
+                      <th>任务类型</th>
+                      <th>状态</th>
+                      <th>重试次数</th>
+                      <th>更新时间</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="mono">T-1024</td>
+                      <td>促销执行</td>
+                      <td><span class="pill-tag pill-tag-shade">等待审批</span></td>
+                      <td class="mono">0 / 3</td>
+                      <td class="mono">11-21 10:24</td>
+                      <td>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-subtle"
+                          data-jump-view="workspace"
+                        >
+                          查看对话
+                        </button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class="mono">T-1023</td>
+                      <td>促销生效</td>
+                      <td><span class="pill-tag pill-tag-outline">已排期</span></td>
+                      <td class="mono">0 / 3</td>
+                      <td class="mono">11-21 10:12</td>
+                      <td>
+                        <button type="button" class="btn btn-sm btn-outline-subtle">详情</button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class="mono">T-1018</td>
+                      <td>退款执行</td>
+                      <td><span class="pill-tag pill-tag-mint">成功</span></td>
+                      <td class="mono">1 / 3</td>
+                      <td class="mono">11-21 09:36</td>
+                      <td>
+                        <button type="button" class="btn btn-sm btn-outline-subtle">详情</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div class="live-banner" id="live-banner" role="status" aria-live="polite" aria-atomic="true">
+      <span class="live-banner-dot" aria-hidden="true"></span>
+      <span id="live-banner-text"></span>
+    </div>
+
+    <script>
+      const views = {
+        workspace: document.getElementById("view-workspace"),
+        promotions: document.getElementById("view-promotions"),
+        approvals: document.getElementById("view-approvals"),
+        tasks: document.getElementById("view-tasks"),
+      };
+      const navButtons = document.querySelectorAll(".nav-item[data-view]");
+      const liveBanner = document.getElementById("live-banner");
+      const liveBannerText = document.getElementById("live-banner-text");
+      let bannerTimer = null;
+
+      function announce(message) {
+        liveBannerText.textContent = message;
+        liveBanner.classList.add("visible");
+        clearTimeout(bannerTimer);
+        bannerTimer = setTimeout(() => {
+          liveBanner.classList.remove("visible");
+        }, 2800);
+      }
+
+      function switchView(targetView) {
+        if (!views[targetView]) return;
+        navButtons.forEach((button) => {
+          if (button.dataset.view === targetView) {
+            button.setAttribute("aria-current", "page");
+          } else {
+            button.removeAttribute("aria-current");
+          }
+        });
+        Object.entries(views).forEach(([key, panel]) => {
+          panel.classList.toggle("active", key === targetView);
+        });
+      }
+
+      navButtons.forEach((button) => {
+        button.addEventListener("click", () => switchView(button.dataset.view));
+      });
+
+      document.querySelectorAll("[data-jump-view]").forEach((button) => {
+        button.addEventListener("click", () => switchView(button.dataset.jumpView));
+      });
+
+      // Idempotent submit approval demo
+      const submitBtn = document.getElementById("submit-approval-btn");
+      const reviseBtn = document.getElementById("revise-plan-btn");
+      const proposalStatus = document.getElementById("proposal-status");
+      let submitted = false;
+
+      submitBtn.addEventListener("click", () => {
+        if (!submitted) {
+          submitted = true;
+          submitBtn.textContent = "已提交审批";
+          submitBtn.classList.remove("btn-primary");
+          submitBtn.classList.add("btn-aloe");
+          proposalStatus.textContent = "已关联审批单 APR-20261121-01 · 等待审批";
+          announce("已提交审批单 APR-20261121-01（同一版本重复提交将返回原单）");
+        } else {
+          announce("幂等命中：V1 已存在审批单 APR-20261121-01，未重复创建");
+        }
+      });
+
+      reviseBtn.addEventListener("click", () => {
+        const input = document.getElementById("chat-input");
+        input.value = "把开始时间改为 11 月 23 日，折扣调整为 8.5 折";
+        input.focus();
+        announce("已填入修改草稿，提交后将递增方案版本至 V2");
+      });
+
+      // Simulated composer interaction
+      const chatForm = document.getElementById("chat-form");
+      const chatInput = document.getElementById("chat-input");
+      const chatMessages = document.getElementById("chat-messages");
+
+      chatForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const promptText = chatInput.value.trim();
+        if (!promptText) return;
+
+        const userBubble = document.createElement("div");
+        userBubble.className = "msg-user";
+        userBubble.textContent = promptText;
+        chatMessages.appendChild(userBubble);
+
+        const agentReply = document.createElement("div");
+        agentReply.className = "msg-agent-simple";
+        agentReply.textContent = `当前为原型演示：已记录指令“${promptText}”。正式环境中将调用只读查询工具核验数据库事实，涉及写操作会生成新版本方案并走审批流。`;
+        chatMessages.appendChild(agentReply);
+
+        chatInput.value = "";
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      });
+
+      // Approval table interactive decision
+      let pendingApprovals = 2;
+      const navApprovalCount = document.getElementById("nav-approval-count");
+      const railApprovalBadge = document.getElementById("rail-approval-badge");
+      const tableApprovalBadge = document.getElementById("table-approval-badge");
+
+      function syncApprovalCount() {
+        navApprovalCount.textContent = String(pendingApprovals);
+        railApprovalBadge.textContent = `${pendingApprovals} 个待处理`;
+        tableApprovalBadge.textContent = `${pendingApprovals} 个待审批`;
+      }
+
+      document.querySelectorAll("[data-decide]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const row = button.closest("tr");
+          const id = row.dataset.approvalId;
+          const decision = button.dataset.decide;
+          const statusCell = row.querySelector(".status-cell");
+          const rowButtons = row.querySelectorAll("button");
+          rowButtons.forEach((btn) => (btn.disabled = true));
+
+          if (decision === "approve") {
+            statusCell.innerHTML = '<span class="pill-tag pill-tag-mint">已批准 · 待复核</span>';
+            announce(`审批单 ${id} 已批准，已写入 Outbox 等待 Worker 复核排期`);
+          } else {
+            statusCell.innerHTML = '<span class="pill-tag pill-tag-outline">已驳回</span>';
+            announce(`审批单 ${id} 已驳回，运营可修改参数后生成新版本`);
+          }
+
+          pendingApprovals = Math.max(0, pendingApprovals - 1);
+          syncApprovalCount();
+        });
+      });
+    </script>
+  </body>
+</html>
