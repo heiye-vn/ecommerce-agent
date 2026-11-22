@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: commerce-agent-postgres
+    environment:
+      POSTGRES_USER: commerce_agent
+      POSTGRES_PASSWORD: commerce_agent
+      POSTGRES_DB: commerce_agent
+    ports:
+      - "7600:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U commerce_agent -d commerce_agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: commerce-agent-redis
+    ports:
+      - "7601:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: commerce-agent-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: commerce_agent
+      RABBITMQ_DEFAULT_PASS: commerce_agent
+    ports:
+      - "7602:5672"
+      - "7603:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
