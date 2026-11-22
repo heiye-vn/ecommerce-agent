@@ -1,0 +1,236 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-width: 960px;
+  min-height: 100vh;
+  background: #fbfbf5;
+  color: #000000;
+  font-feature-settings: "ss03";
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  padding: 0 24px;
+  background: #ffffff;
+  border-bottom: 1px solid #e4e4e7;
+  box-sizing: border-box;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+}
+
+.brandMark {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  background: #000000;
+  border-radius: 9999px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.brandName {
+  margin-left: 10px;
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.brandDivider {
+  width: 1px;
+  height: 16px;
+  margin: 0 12px;
+  background: #e4e4e7;
+}
+
+.brandDescription {
+  color: #52525b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.sandboxBadge {
+  padding: 4px 10px;
+  background: #d4f9e0;
+  border-radius: 9999px;
+  color: #3f3f46;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 36px;
+  padding: 36px;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+  padding: 56px;
+  background: #d4f9e0;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+}
+
+.heroContent {
+  width: 100%;
+  max-width: 440px;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: 48px;
+  font-weight: 400;
+  line-height: 1.25;
+  letter-spacing: 0.36px;
+}
+
+.heroSummary {
+  margin: 20px 0 0;
+  color: #52525b;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.featureList {
+  margin-top: 44px;
+  border-top: 1px solid rgb(82 82 91 / 16%);
+}
+
+.featureRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 0;
+  border-bottom: 1px solid rgb(82 82 91 / 16%);
+  color: #52525b;
+  font-size: 13px;
+}
+
+.featureIcon {
+  width: 32px;
+  height: 32px;
+  padding: 7px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 32%);
+  color: #000000;
+}
+
+.featureTitle {
+  width: 112px;
+  flex-shrink: 0;
+  color: #000000;
+  font-weight: 550;
+}
+
+.loginPanel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 36px;
+}
+
+.formWrapper {
+  width: 100%;
+  max-width: 392px;
+}
+
+.formWrapper h2 {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 500;
+  line-height: 1.28;
+}
+
+.loginSummary {
+  margin: 8px 0 24px;
+  color: #52525b;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.loginForm :global(.ant-form-item) {
+  margin-bottom: 20px;
+}
+
+.loginForm :global(.ant-form-item-label) {
+  padding-bottom: 8px;
+}
+
+.loginForm :global(.ant-form-item-label > label) {
+  color: #000000;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.loginForm :global(.ant-input),
+.loginForm :global(.ant-input-affix-wrapper) {
+  min-height: 40px;
+  border-color: #e4e4e7;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.loginForm :global(.ant-input) {
+  padding: 8px 12px;
+}
+
+.loginForm :global(.ant-input-affix-wrapper .ant-input) {
+  min-height: 0;
+  padding: 0;
+}
+
+.loginForm :global(.ant-input:focus),
+.loginForm :global(.ant-input-affix-wrapper-focused) {
+  border-color: #000000;
+  box-shadow: 0 0 0 2px rgb(0 0 0 / 8%);
+}
+
+.error {
+  margin: 0;
+  color: #a61d24;
+  font-size: 14px;
+}
+
+.submitItem {
+  margin-top: 24px;
+}
+
+.submitItem :global(.ant-btn) {
+  height: 44px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.sandboxNote {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  color: #52525b;
+  font-size: 13px;
+}
+
+.sandboxNote strong {
+  color: #000000;
+  font-weight: 550;
+}
+
+.sandboxNote p {
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
