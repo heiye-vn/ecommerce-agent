@@ -1,25 +1,13 @@
 import { InboxOutlined, SearchOutlined } from "@ant-design/icons"
 import { Alert, Button, Input, Select, Spin, Table } from "antd"
 import type { TableColumnsType } from "antd"
-import { useEffect, useEffectEvent, useState } from "react"
+import { useState } from "react"
 import { Link } from "react-router-dom"
 
-import { readShop, type ShopReadProps } from "../../auth"
+import { ApiError } from "../../api/client"
+import { useCatalogQuery, type CatalogSku } from "../../api/queries"
+import type { ShopReadProps } from "../../auth"
 import styles from "./index.module.css"
-
-type CatalogSku = {
-  sku_code: string
-  product_name: string
-  category: string
-  status: string
-  current_price: string
-  available_qty: number | null
-  reserved_qty: number | null
-}
-
-type CatalogState =
-  | { kind: "loading" | "permission" | "expired" | "error" }
-  | { kind: "ready"; rows: CatalogSku[] }
 
 const pageSize = 6
 const statusLabels = { active: "在售", inactive: "已下架", other: "其他状态" }
@@ -80,37 +68,16 @@ const columns: TableColumnsType<CatalogSku> = [
 ]
 
 export default function CatalogPage(props: ShopReadProps) {
-  const { shopId, onSignIn } = props
-  const [state, setState] = useState<CatalogState>({ kind: "loading" })
-  const [attempt, setAttempt] = useState(0)
+  const { onSignIn } = props
+  const query = useCatalogQuery(props)
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string>()
   const [status, setStatus] = useState<string>()
   const [inventory, setInventory] = useState<string>()
   const [page, setPage] = useState(1)
 
-  const load = useEffectEvent(async (signal: AbortSignal) => {
-    try {
-      const response = await readShop("catalog", props, signal)
-      if (!response || signal.aborted) return
-      let result: CatalogState
-      if (response.status === 401) result = { kind: "expired" }
-      else if (response.status === 403) result = { kind: "permission" }
-      else if (!response.ok) result = { kind: "error" }
-      else result = { kind: "ready", rows: await response.json() }
-      if (!signal.aborted) setState(result)
-    } catch {
-      if (!signal.aborted) setState({ kind: "error" })
-    }
-  })
-
-  useEffect(() => {
-    const controller = new AbortController()
-    void load(controller.signal)
-    return () => controller.abort()
-  }, [shopId, attempt])
-
-  const rows = state.kind === "ready" ? state.rows : []
+  const isReady = query.isSuccess
+  const rows = isReady ? query.data : []
   const categories = [...new Set(rows.map(row => row.category))]
   const normalizedSearch = search.trim().toLowerCase()
   const filtered = rows.filter(row => (
@@ -121,7 +88,6 @@ export default function CatalogPage(props: ShopReadProps) {
   ))
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const visiblePage = Math.min(page, pages)
-  const isReady = state.kind === "ready"
 
   function clearFilters() {
     setSearch("")
@@ -132,24 +98,24 @@ export default function CatalogPage(props: ShopReadProps) {
   }
 
   function retry() {
-    setState({ kind: "loading" })
-    setAttempt(value => value + 1)
+    void query.refetch()
   }
 
-  const emptyContent = state.kind === "loading"
+  const errorStatus = query.error instanceof ApiError ? query.error.status : undefined
+  const emptyContent = query.isPending || query.isRefetching
     ? <span role="status"><Spin size="small" /> 正在加载商品</span>
-    : state.kind === "permission"
-      ? <Alert type="warning" showIcon message="没有权限查看当前店铺的商品" description="如需访问，请联系组织管理员。" />
-      : state.kind === "expired"
-        ? <Alert type="warning" showIcon message="登录状态已失效" action={<Button onClick={onSignIn}>重新登录</Button>} />
-        : state.kind === "error"
-          ? <Alert type="error" showIcon message="商品数据加载失败" action={<Button aria-label="重试" onClick={retry}>重试</Button>} />
-          : rows.length === 0
-            ? <span>当前店铺暂无商品</span>
-            : <div className={styles.noResults}>
-                <span>没有符合条件的商品</span>
-                <Button onClick={clearFilters}>清除筛选</Button>
-              </div>
+    : query.isError
+      ? errorStatus === 403
+        ? <Alert type="warning" showIcon message="没有权限查看当前店铺的商品" description="如需访问，请联系组织管理员。" />
+        : errorStatus === 401
+          ? <Alert type="warning" showIcon message="登录状态已失效" action={<Button onClick={onSignIn}>重新登录</Button>} />
+          : <Alert type="error" showIcon message="商品数据加载失败" action={<Button aria-label="重试" onClick={retry}>重试</Button>} />
+      : rows.length === 0
+        ? <span>当前店铺暂无商品</span>
+        : <div className={styles.noResults}>
+            <span>没有符合条件的商品</span>
+            <Button onClick={clearFilters}>清除筛选</Button>
+          </div>
 
   return (
     <main className={styles.page}>

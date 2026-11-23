@@ -1,4 +1,7 @@
 .page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 76px);
   min-width: 0;
   padding: 24px 32px 32px;
   color: #000;
@@ -25,13 +28,26 @@
 }
 
 .summary {
-  margin: 0 0 22px;
+  margin: 0;
   color: #52525b;
   line-height: 1.5;
 }
 
+.pageActions, .examples {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pageActions {
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
 .grid {
   display: grid;
+  flex: 1;
+  min-height: 0;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   align-items: start;
   gap: 16px;
@@ -42,6 +58,21 @@
   border: 1px solid #e4e4e7;
   border-radius: 12px;
   background: #fff;
+}
+
+.conversation {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+}
+
+.facts {
+  max-height: 100%;
+  overflow: auto;
+}
+
+.conversation > .panelHeader, .composer {
+  flex-shrink: 0;
 }
 
 .panelHeader, .resultHeader, .composer {
@@ -87,8 +118,8 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 160px;
-  max-height: 465px;
+  flex: 0 1 auto;
+  min-height: 0;
   padding: 14px 18px;
   overflow: auto;
 }
@@ -133,6 +164,52 @@
   font-size: 16px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.earlierReply {
+  margin: 0;
+  color: #52525b;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.previewBody {
+  padding: 12px;
+}
+
+.previewBand {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  padding: 12px;
+  gap: 12px;
+  border-radius: 8px;
+  background: #d4f9e0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.previewBand > div + div {
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid #b5dbc3;
+}
+
+.previewBand strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 30px;
+}
+
+.previewBand p, .previewNote {
+  margin: 4px 0 0;
+  color: #29533e;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.previewNote {
+  margin-top: 10px;
+  color: #52525b;
 }
 
 .agentIcon {
@@ -210,4 +287,125 @@
 .facts .demoDate {
   color: #52525b;
   font-size: 13px;
+}
+
+.sideColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 100%;
+  overflow: auto;
+}
+
+.progressCard {
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.progressSteps {
+  list-style: none;
+  margin: 0;
+  padding: 12px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.progressStep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #71717a;
+}
+
+.progressDot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid #d4d4d8;
+  display: inline-grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.stepDone {
+  color: #000;
+}
+
+.stepDone .progressDot {
+  background: #000;
+  border-color: #000;
+  color: #fff;
+}
+
+.stepCurrent {
+  color: #000;
+  font-weight: 550;
+}
+
+.stepCurrent .progressDot {
+  background: #c1fbd4;
+  border-color: #164b36;
+  color: #164b36;
+}
+
+.submitActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.submissionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+  margin: 0;
+  padding: 14px 18px;
+}
+
+.submissionGrid dt {
+  color: #71717a;
+  font-size: 12px;
+}
+
+.submissionGrid dd {
+  margin: 4px 0 0;
+  color: #000;
+  font-size: 14px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+.idempotencyHint {
+  margin: 0 18px 14px;
+  padding: 8px 12px;
+  border: 1px solid #c1fbd4;
+  border-radius: 8px;
+  background: #edf9f1;
+  color: #164b36;
+  font-size: 13px;
+}
+
+.inlineLink {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 14px;
+  border: 1px solid #e4e4e7;
+  border-radius: 9999px;
+  color: #000;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.inlineLink:hover {
+  border-color: #000;
+  color: #000;
 }

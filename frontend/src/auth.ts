@@ -3,10 +3,18 @@ export type LoginValues = {
   password: string
 }
 
+export type ShopAccess = {
+  id: number
+  organization_id: number
+  name: string
+  timezone?: string
+  roles: string[]
+}
+
 export type Session = {
   access_token: string
   user: { id: number; username: string; name: string }
-  shops: { id: number; organization_id: number; name: string; roles: string[] }[]
+  shops: ShopAccess[]
 }
 
 async function postAuth(action: "login" | "refresh", credentials?: LoginValues) {
@@ -49,22 +57,33 @@ export type ShopReadProps = {
 }
 
 export async function readShop(
-  resource: string, { shopId, accessToken, onSessionRenewed }: ShopReadProps, signal: AbortSignal,
-  payload?: { message: string },
+  resource: string,
+  { shopId, accessToken, onSessionRenewed }: ShopReadProps,
+  signal?: AbortSignal,
+  payload?: object,
+  options?: { idempotencyKey?: string },
 ): Promise<Response | undefined> {
-  const request = (token: string) => fetch(`/api/shops/${shopId}/${resource}`, {
-    ...(payload && { method: "POST", body: JSON.stringify(payload) }),
-    headers: { Authorization: `Bearer ${token}`, ...(payload && { "Content-Type": "application/json" }) },
-    signal,
-  })
+  const request = (token: string) => {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      ...(payload && { "Content-Type": "application/json" }),
+      ...(options?.idempotencyKey && { "Idempotency-Key": options.idempotencyKey }),
+    }
+    return fetch(`/api/shops/${shopId}/${resource}`, {
+      ...(payload && { method: "POST", body: JSON.stringify(payload) }),
+      headers,
+      signal,
+    })
+  }
   const response = await request(accessToken)
-  if (signal.aborted) return
+  if (signal?.aborted) return
   if (response.status !== 401) return response
   const renewed = await refreshSession()
-  if (signal.aborted) return
+  if (signal?.aborted) return
   if (!renewed) return response
   onSessionRenewed(renewed)
-  if (renewed.shops[0]?.id !== shopId) return
+  // 修复多店铺场景：校验续期后的授权列表是否仍包含当前请求的 shopId
+  if (!renewed.shops.some(shop => shop.id === shopId)) return
   return request(renewed.access_token)
 }
 

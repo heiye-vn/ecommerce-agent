@@ -1,39 +1,29 @@
 import { SearchOutlined } from "@ant-design/icons"
 import { Alert, Button, Input, Select, Spin, Table } from "antd"
 import type { TableColumnsType } from "antd"
-import { useEffect, useEffectEvent, useState } from "react"
+import { useState } from "react"
 import { Link, useParams } from "react-router-dom"
 
-import { readShop, type ShopReadProps } from "../../auth"
+import { ApiError } from "../../api/client"
+import {
+  useOrderDetailQuery,
+  useOrdersQuery,
+  type OrderLine,
+  type OrderSummary,
+} from "../../api/queries"
+import type { ShopReadProps } from "../../auth"
 import styles from "./index.module.css"
 
-type Order = {
-  id: number
-  order_no: string
-  status: string
-  paid_amount: string
-  paid_at: string | null
-  created_at: string
-  sku_codes: string[]
-  quantity: number
-}
-
-type Line = {
-  id: number
-  sku_code: string
-  product_name: string
-  quantity: number
-  unit_price: string
-  paid_amount: string
-}
-
-type Detail = Order & { items: Line[] }
-type ReadState<Data> =
-  | { kind: "loading" | "expired" | "denied" | "missing" | "error" }
-  | { kind: "ready"; data: Data }
+type FeedbackKind = "loading" | "expired" | "denied" | "missing" | "error"
 
 const pageSize = 6
-const labels = new Map([["paid", "已支付"], ["pending", "待支付"], ["refunded", "已退款"], ["cancelled", "已取消"]])
+const labels = new Map([
+  ["paid", "已支付"],
+  ["pending", "待支付"],
+  ["partially_refunded", "部分退款"],
+  ["refunded", "已退款"],
+  ["cancelled", "已取消"],
+])
 const dateTime = new Intl.DateTimeFormat("sv-SE", {
   timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
 })
@@ -45,39 +35,17 @@ function Status({ status }: { status: string }) {
   return <span className={status === "paid" ? styles.paid : styles.status}>{labels.get(status) ?? "其他状态"}</span>
 }
 
-function useOrders<Data>(resource: string, props: ShopReadProps, enabled = true) {
-  const [state, setState] = useState<ReadState<Data>>({ kind: "loading" })
-  const [attempt, setAttempt] = useState(0)
-  const load = useEffectEvent(async (signal: AbortSignal) => {
-    try {
-      const response = await readShop(resource, props, signal)
-      if (!response || signal.aborted) return
-      const kind = response.status === 401 ? "expired" : response.status === 403 ? "denied"
-        : response.status === 404 ? "missing" : "error"
-      const result: ReadState<Data> = response.ok ? { kind: "ready", data: await response.json() } : { kind }
-      if (!signal.aborted) setState(result)
-    } catch {
-      if (!signal.aborted) setState({ kind: "error" })
-    }
-  })
-
-  useEffect(() => {
-    if (!enabled) return
-    const controller = new AbortController()
-    void load(controller.signal)
-    return () => controller.abort()
-  }, [props.shopId, resource, attempt, enabled])
-
-  function retry() {
-    setState({ kind: "loading" })
-    setAttempt(value => value + 1)
+function errorToKind(error: unknown): Exclude<FeedbackKind, "loading"> {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return "expired"
+    if (error.status === 403) return "denied"
+    if (error.status === 404) return "missing"
   }
-
-  return { state, retry }
+  return "error"
 }
 
 function Feedback({ kind, retry, onSignIn }: {
-  kind: Exclude<ReadState<unknown>["kind"], "ready">; retry: () => void; onSignIn: () => void
+  kind: FeedbackKind; retry: () => void; onSignIn: () => void
 }) {
   if (kind === "loading") return <span role="status"><Spin size="small" /> 正在加载订单</span>
   if (kind === "denied") return <Alert showIcon type="warning" message="没有权限查看当前店铺的订单" description="如需访问，请联系组织管理员。" />
@@ -94,7 +62,7 @@ function Breadcrumb({ detail }: { detail?: boolean }) {
   </nav>
 }
 
-const orderColumns: TableColumnsType<Order> = [
+const orderColumns: TableColumnsType<OrderSummary> = [
   { title: "订单编号 / 商品", width: "35%", dataIndex: "order_no", rowScope: "row", render: (number: string, order) => (
     <div className={styles.orderLabel}>
       <strong title={number}>{number}</strong>
@@ -108,13 +76,13 @@ const orderColumns: TableColumnsType<Order> = [
 ]
 
 function OrderList(props: ShopReadProps) {
-  const { state, retry } = useOrders<Order[]>("orders", props)
+  const query = useOrdersQuery(props)
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("")
   const [paidDay, setPaidDay] = useState("")
   const [page, setPage] = useState(1)
-  const ready = state.kind === "ready"
-  const orders = ready ? state.data : []
+  const ready = query.isSuccess
+  const orders = ready ? query.data : []
   const term = search.trim().toLowerCase()
   const results = orders.filter(order => (
     (order.order_no.toLowerCase().includes(term) || order.sku_codes.some(code => code.toLowerCase().includes(term)))
@@ -129,6 +97,8 @@ function OrderList(props: ShopReadProps) {
     setPaidDay("")
     setPage(1)
   }
+
+  const feedbackKind: FeedbackKind = query.isPending || query.isRefetching ? "loading" : errorToKind(query.error)
 
   return <main className={styles.page}>
     <Breadcrumb />
@@ -154,11 +124,11 @@ function OrderList(props: ShopReadProps) {
           </label>
           <span className={styles.timezone}>上海时间（UTC+8）</span>
         </div>
-        <Table<Order> className={styles.table} rowKey="id" columns={orderColumns} tableLayout="fixed" pagination={false}
+        <Table<OrderSummary> className={styles.table} rowKey="id" columns={orderColumns} tableLayout="fixed" pagination={false}
           dataSource={results.slice((currentPage - 1) * pageSize, currentPage * pageSize)}
           locale={{ emptyText: ready
             ? (orders.length ? <div className={styles.empty}>没有符合条件的订单 <Button onClick={clearFilters}>清除筛选</Button></div> : "当前店铺暂无订单")
-            : <Feedback kind={state.kind} retry={retry} onSignIn={props.onSignIn} /> }} />
+            : <Feedback kind={feedbackKind} retry={() => { void query.refetch() }} onSignIn={props.onSignIn} /> }} />
         {ready && <footer className={styles.footer}>
           <span aria-live="polite">共 {results.length} 条记录</span>
           <nav className={styles.pager} aria-label="订单分页">
@@ -172,7 +142,7 @@ function OrderList(props: ShopReadProps) {
   </main>
 }
 
-const lineColumns: TableColumnsType<Line> = [
+const lineColumns: TableColumnsType<OrderLine> = [
   { title: "商品 / 规格", dataIndex: "product_name", width: "35%", rowScope: "row", ellipsis: true },
   { title: "SKU", dataIndex: "sku_code", width: "20%", ellipsis: true },
   { title: "数量", dataIndex: "quantity", width: "11%", align: "right", className: styles.number },
@@ -182,8 +152,13 @@ const lineColumns: TableColumnsType<Line> = [
 
 function OrderDetail({ orderId, ...props }: ShopReadProps & { orderId: string }) {
   const valid = /^[1-9]\d{0,9}$/.test(orderId) && Number(orderId) <= 2_147_483_647
-  const { state, retry } = useOrders<Detail>(`orders/${orderId}`, props, valid)
-  const order = state.kind === "ready" ? state.data : undefined
+  const query = useOrderDetailQuery(props, orderId, valid)
+  const order = query.isSuccess ? query.data : undefined
+  const feedbackKind: FeedbackKind = !valid
+    ? "missing"
+    : query.isPending || query.isRefetching
+      ? "loading"
+      : errorToKind(query.error)
 
   return <main className={styles.page}>
     <Breadcrumb detail />
@@ -191,25 +166,25 @@ function OrderDetail({ orderId, ...props }: ShopReadProps & { orderId: string })
       <div><h1>订单详情</h1><p className={styles.summary}>{order?.order_no ?? "查看订单支付信息与商品明细。"}</p></div>
       <Link className={styles.back} to="/orders">返回订单列表</Link>
     </header>
-    {!valid || state.kind !== "ready" ? <div className={styles.feedback}>
-      <Feedback kind={!valid || state.kind === "ready" ? "missing" : state.kind} retry={retry} onSignIn={props.onSignIn} />
+    {!valid || !order ? <div className={styles.feedback}>
+      <Feedback kind={feedbackKind} retry={() => { void query.refetch() }} onSignIn={props.onSignIn} />
     </div> : <>
       <section className={styles.panel} aria-labelledby="info-heading">
         <h2 id="info-heading" className={styles.panelTitle}>订单信息</h2>
         <dl className={styles.info}>
-          <div><dt>订单编号</dt><dd title={state.data.order_no}>{state.data.order_no}</dd></div>
-          <div><dt>订单状态</dt><dd><Status status={state.data.status} /></dd></div>
-          <div><dt>支付时间（上海时间）</dt><dd>{paymentTime(state.data.paid_at)}</dd></div>
-          <div><dt>创建时间（上海时间）</dt><dd>{paymentTime(state.data.created_at)}</dd></div>
-          <div><dt>实付金额</dt><dd>{money(state.data.paid_amount)}</dd></div>
-          <div><dt>商品数量</dt><dd>{state.data.quantity} 件</dd></div>
+          <div><dt>订单编号</dt><dd title={order.order_no}>{order.order_no}</dd></div>
+          <div><dt>订单状态</dt><dd><Status status={order.status} /></dd></div>
+          <div><dt>支付时间（上海时间）</dt><dd>{paymentTime(order.paid_at)}</dd></div>
+          <div><dt>创建时间（上海时间）</dt><dd>{paymentTime(order.created_at)}</dd></div>
+          <div><dt>实付金额</dt><dd>{money(order.paid_amount)}</dd></div>
+          <div><dt>商品数量</dt><dd>{order.quantity} 件</dd></div>
         </dl>
       </section>
       <section className={styles.panel} aria-labelledby="lines-heading">
         <h2 id="lines-heading" className={styles.panelTitle}>商品明细</h2>
         <div className={styles.lines} tabIndex={0} role="region" aria-label="订单商品明细表">
-          <Table<Line> className={styles.table} rowKey="id" columns={lineColumns} tableLayout="fixed" pagination={false}
-            dataSource={state.data.items} locale={{ emptyText: "这笔订单暂无商品明细" }} />
+          <Table<OrderLine> className={styles.table} rowKey="id" columns={lineColumns} tableLayout="fixed" pagination={false}
+            dataSource={order.items} locale={{ emptyText: "这笔订单暂无商品明细" }} />
         </div>
       </section>
     </>}

@@ -1,31 +1,46 @@
-import { App as AntApp, Button, Space, Typography } from "antd"
+import { App as AntApp, Button, Select, Space, Typography } from "antd"
 import {
   AppstoreOutlined,
   FileSearchOutlined,
   LineChartOutlined,
+  SafetyCertificateOutlined,
   ShoppingCartOutlined,
   TagOutlined,
 } from "@ant-design/icons"
 import { useState, type ReactNode } from "react"
 import { NavLink } from "react-router-dom"
 
+import type { ShopAccess } from "./auth"
 import styles from "./App.module.css"
 
 const navigationItems = [
-  { key: "agent", label: "Agent 对话", to: "/" },
-  { key: "catalog", label: "商品运营", to: "/catalog" },
-  { key: "promotions", label: "促销管理", to: "/promotions" },
-  { key: "orders", label: "订单售后", to: "/orders" },
-  { key: "analytics", label: "经营分析", to: "/analytics" },
+  { key: "agent", label: "Agent 对话", to: "/", group: "工作台" },
+  { key: "catalog", label: "商品运营", to: "/catalog", group: "业务" },
+  { key: "promotions", label: "促销管理", to: "/promotions", group: "业务" },
+  { key: "orders", label: "订单售后", to: "/orders", group: "业务" },
+  { key: "analytics", label: "经营分析", to: "/analytics", group: "业务" },
+  { key: "approvals", label: "审批中心", to: "/approvals", group: "系统管理" },
 ]
 
 type AppProps = {
   shopName: string
+  userName?: string
+  shops?: ShopAccess[]
+  activeShopId?: number
+  onSelectShop?: (shopId: number) => void
   onLogout: () => Promise<void>
   children?: ReactNode
 }
 
-export default function App({ shopName, onLogout, children }: AppProps) {
+export default function App({
+  shopName,
+  userName,
+  shops,
+  activeShopId,
+  onSelectShop,
+  onLogout,
+  children,
+}: AppProps) {
   const { message } = AntApp.useApp()
   const [signingOut, setSigningOut] = useState(false)
 
@@ -40,40 +55,59 @@ export default function App({ shopName, onLogout, children }: AppProps) {
     }
   }
 
+  const canSwitchShop = Boolean(shops && shops.length > 1 && onSelectShop)
+
+  function renderIcon(key: string) {
+    if (key === "agent") return <AppstoreOutlined />
+    if (key === "catalog") return <ShoppingCartOutlined />
+    if (key === "promotions") return <TagOutlined />
+    if (key === "orders") return <FileSearchOutlined />
+    if (key === "approvals") return <SafetyCertificateOutlined />
+    return <LineChartOutlined />
+  }
+
   return (
     <div className={styles.shell}>
       <header className={styles.banner} aria-label="CommerceAgent">
         <h1 className={styles.brand}>CommerceAgent</h1>
         <div className={styles.shopSwitcher}>
           <span>当前店铺</span>
-          <span className={styles.shop}>{shopName}</span>
+          {canSwitchShop && shops && onSelectShop ? (
+            <Select<number>
+              className={styles.shopSelect}
+              aria-label="切换店铺"
+              value={activeShopId ?? shops[0]?.id}
+              onChange={onSelectShop}
+              virtual={false}
+              options={shops.map(shop => ({ value: shop.id, label: shop.name }))}
+            />
+          ) : (
+            <span className={styles.shop}>{shopName}</span>
+          )}
+          {userName && <span className={styles.userBadge}>{userName}</span>}
           <Button onClick={handleLogout} loading={signingOut}>退出登录</Button>
         </div>
       </header>
       <div className={styles.layout}>
         <nav className={styles.navigation} aria-label="主导航">
-          {navigationItems.map((item) => (
-            <NavLink
-              key={item.key}
-              to={item.to}
-              className={({ isActive }) =>
-                `${styles.navigationLink} ${isActive ? styles.active : ""}`
-              }
-            >
-              {item.key === "agent" ? (
-                <AppstoreOutlined />
-              ) : item.key === "catalog" ? (
-                <ShoppingCartOutlined />
-              ) : item.key === "promotions" ? (
-                <TagOutlined />
-              ) : item.key === "orders" ? (
-                <FileSearchOutlined />
-              ) : (
-                <LineChartOutlined />
-              )}
-              <span>{item.label}</span>
-            </NavLink>
-          ))}
+          {navigationItems.map((item, index) => {
+            const showGroup = index === 0 || navigationItems[index - 1]?.group !== item.group
+            return (
+              <div key={item.key} className={styles.navItemWrap}>
+                {showGroup && <span className={styles.navGroupLabel}>{item.group}</span>}
+                <NavLink
+                  to={item.to}
+                  end={item.to === "/"}
+                  className={({ isActive }) =>
+                    `${styles.navigationLink} ${isActive ? styles.active : ""}`
+                  }
+                >
+                  {renderIcon(item.key)}
+                  <span>{item.label}</span>
+                </NavLink>
+              </div>
+            )
+          })}
         </nav>
         {children ?? <main className={styles.workspace}>
           <p className={styles.eyebrow}>可控执行型电商运营 Agent</p>

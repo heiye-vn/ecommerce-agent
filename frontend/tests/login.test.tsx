@@ -72,14 +72,14 @@ describe("AppRouter", () => {
       .mockResolvedValueOnce(Response.json(session))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
     vi.stubGlobal("fetch", fetchMock)
-    window.history.replaceState(null, "", "/promotions")
+    window.history.replaceState(null, "", "/analytics")
     render(<AppRouter />)
 
     fireEvent.change(await screen.findByLabelText("密码"), { target: { value: "test-password" } })
     fireEvent.click(screen.getByRole("button", { name: /登录工作台/ }))
 
     expect(await screen.findByText("测试授权店铺")).toBeInTheDocument()
-    expect(window.location.pathname).toBe("/promotions")
+    expect(window.location.pathname).toBe("/analytics")
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/auth/login", expect.objectContaining({
       method: "POST", body: JSON.stringify({ username: "ops.demo", password: "test-password" }),
     }))
