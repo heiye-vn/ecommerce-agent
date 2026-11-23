@@ -8,7 +8,6 @@ from argon2.exceptions import InvalidHashError, VerificationError
 
 from app.core.db import read_setting
 
-
 ACCESS_LIFETIME = timedelta(minutes=15)
 REFRESH_LIFETIME = timedelta(days=7)
 ISSUER = "commerce-agent"
@@ -22,14 +21,17 @@ class AuthSettings:
     secure_cookie: bool
 
     @classmethod
-    def load(cls) -> "AuthSettings":
-        secret = read_setting("AUTH_JWT_SECRET")
+    def from_values(cls, secret: str | None, secure_cookie: str | None) -> "AuthSettings":
         if not secret or len(secret.encode()) < 32:
             raise RuntimeError("AUTH_JWT_SECRET must contain at least 32 bytes")
-        secure_cookie = (read_setting("AUTH_COOKIE_SECURE") or "true").lower()
-        if secure_cookie not in {"true", "false"}:
+        flag = (secure_cookie or "true").lower()
+        if flag not in {"true", "false"}:
             raise RuntimeError("AUTH_COOKIE_SECURE must be true or false")
-        return cls(secret, secure_cookie == "true")
+        return cls(secret, flag == "true")
+
+    @classmethod
+    def load(cls) -> "AuthSettings":
+        return cls.from_values(read_setting("AUTH_JWT_SECRET"), read_setting("AUTH_COOKIE_SECURE"))
 
 
 def verify_password(password: str, password_hash: str | None) -> bool:

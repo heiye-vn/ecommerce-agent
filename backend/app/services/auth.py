@@ -7,7 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.security import (
-    REFRESH_LIFETIME, AuthSettings, issue_access_token, read_access_token, verify_password,
+    REFRESH_LIFETIME,
+    AuthSettings,
+    issue_access_token,
+    read_access_token,
+    verify_password,
 )
 from app.models import AuthSession, Membership, Organization, Shop, User
 from app.schemas.auth import LoginRequest, LoginResponse, ShopAccess, UserInfo
@@ -21,7 +25,7 @@ async def accessible_shops(
     session: AsyncSession, user_id: int, shop_id: int | None = None
 ) -> list[ShopAccess]:
     query = (
-        select(Shop.id, Shop.organization_id, Shop.name, Membership.role)
+        select(Shop.id, Shop.organization_id, Shop.name, Shop.timezone, Membership.role)
         .join(Organization, Shop.organization_id == Organization.id)
         .join(
             Membership,
@@ -36,9 +40,11 @@ async def accessible_shops(
     if shop_id is not None:
         query = query.where(Shop.id == shop_id)
     shops: dict[int, ShopAccess] = {}
-    for shop_key, organization_id, name, role in (await session.execute(query)):
+    for shop_key, organization_id, name, timezone, role in (await session.execute(query)):
         if shop_key not in shops:
-            shops[shop_key] = ShopAccess(id=shop_key, organization_id=organization_id, name=name, roles=[])
+            shops[shop_key] = ShopAccess(
+                id=shop_key, organization_id=organization_id, name=name, timezone=timezone, roles=[]
+            )
         if role not in shops[shop_key].roles:
             shops[shop_key].roles.append(role)
     return list(shops.values())
@@ -67,7 +73,9 @@ async def login(
     shops = await accessible_shops(session, user.id)
     if not shops:
         return None
-    await session.execute(delete(AuthSession).where(AuthSession.user_id == user.id, AuthSession.expires_at <= func.now()))
+    await session.execute(
+        delete(AuthSession).where(AuthSession.user_id == user.id, AuthSession.expires_at <= func.now())
+    )
     token = token_urlsafe(32)
     auth_session = AuthSession(
         user_id=user.id, refresh_hash=hash_refresh_token(token),

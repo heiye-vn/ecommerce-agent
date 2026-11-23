@@ -41,6 +41,7 @@ class Shop(Base):
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"))
     name: Mapped[str] = mapped_column(String(120))
     platform: Mapped[str] = mapped_column(String(32))
+    timezone: Mapped[str] = mapped_column(String(64), server_default="Asia/Shanghai")
     status: Mapped[str] = mapped_column(String(20), server_default="active")
 
 

@@ -2,7 +2,13 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Numeric, String,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Numeric,
+    String,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -55,6 +61,9 @@ class Inventory(Base):
 
 class InventoryMovement(Base):
     __tablename__ = "inventory_movements"
+    __table_args__ = (
+        Index("ix_inventory_movements_sku_created", "sku_id", "created_at"),
+    )
 
     sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"))
     movement_type: Mapped[str] = mapped_column(String(32))
@@ -66,6 +75,7 @@ class PriceHistory(Base):
     __tablename__ = "price_histories"
     __table_args__ = (
         CheckConstraint("old_price >= 0 AND new_price >= 0", name="ck_price_histories_amounts"),
+        Index("ix_price_histories_sku_changed", "sku_id", "changed_at"),
     )
 
     sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"))
@@ -80,6 +90,10 @@ class Order(Base):
         UniqueConstraint("shop_id", "id", name="uq_orders_shop_id"),
         UniqueConstraint("shop_id", "order_no", name="uq_orders_shop_number"),
         Index("ix_orders_shop_paid_at", "shop_id", "paid_at"),
+        CheckConstraint(
+            "status IN ('pending', 'paid', 'partially_refunded', 'refunded', 'cancelled')",
+            name="ck_orders_status",
+        ),
         CheckConstraint(
             "paid_amount >= 0 AND (status <> 'paid' OR paid_at IS NOT NULL)", name="ck_orders_payment",
         ),
@@ -101,6 +115,8 @@ class OrderItem(Base):
         ForeignKeyConstraint(
             ["shop_id", "sku_id"], ["skus.shop_id", "skus.id"], name="fk_order_items_shop_sku",
         ),
+        Index("ix_order_items_shop_sku", "shop_id", "sku_id"),
+        Index("ix_order_items_shop_order", "shop_id", "order_id"),
         CheckConstraint(
             "quantity > 0 AND unit_price >= 0 AND paid_amount >= 0", name="ck_order_items_amounts",
         ),

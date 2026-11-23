@@ -7,16 +7,15 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from testcontainers.community.postgres import PostgresContainer
 
+from alembic import command
 from app.core.db import create_database_engine
 from app.models import Organization, Shop
 from app.services.seed import seed_demo_operator
-
 
 BACKEND = Path(__file__).resolve().parents[2]
 

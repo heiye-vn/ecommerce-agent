@@ -3,12 +3,13 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from testcontainers.community.postgres import PostgresContainer
+
+from alembic import command
 
 
 async def table_names(database_url: str) -> set[str]:
@@ -43,8 +44,26 @@ def test_initial_migration_can_be_rolled_back_and_reapplied(
     migrated_database: Config, database_url: str
 ) -> None:
     expected_tables = {
-        "organizations", "users", "shops", "memberships", "products", "skus", "inventory",
-        "inventory_movements", "price_histories", "orders", "order_items",
+        "organizations",
+        "users",
+        "shops",
+        "memberships",
+        "products",
+        "skus",
+        "inventory",
+        "inventory_movements",
+        "price_histories",
+        "orders",
+        "order_items",
+        "agent_sessions",
+        "agent_messages",
+        "agent_tasks",
+        "agent_tool_calls",
+        "promotions",
+        "promotion_items",
+        "approvals",
+        "operation_requests",
+        "audit_logs",
     }
     command.downgrade(migrated_database, "base")
     assert expected_tables.isdisjoint(asyncio.run(table_names(database_url)))
@@ -102,5 +121,44 @@ async def test_memberships_enforce_organization_and_scope(
                             role=Role.OPERATOR,
                         )
                     )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_shop_timezone_default_and_order_status_constraint(
+    migrated_database: Config, database_url: str
+) -> None:
+    from decimal import Decimal
+
+    from app.core.db import create_database_engine
+    from app.models.catalog import Order
+    from app.models.org import Organization, Shop
+
+    engine = create_database_engine(database_url)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions.begin() as session:
+            org = Organization(name="约束测试组织")
+            session.add(org)
+            await session.flush()
+            shop = Shop(organization_id=org.id, name="默认时区店", platform="sandbox")
+            session.add(shop)
+            await session.flush()
+            await session.refresh(shop)
+            assert shop.timezone == "Asia/Shanghai"
+            shop_id = shop.id
+
+        with pytest.raises(IntegrityError):
+            async with sessions.begin() as session:
+                session.add(
+                    Order(
+                        shop_id=shop_id,
+                        order_no="BAD-STATUS-1",
+                        status="invalid_status",
+                        paid_amount=Decimal("10.00"),
+                        paid_at=None,
+                    )
+                )
     finally:
         await engine.dispose()

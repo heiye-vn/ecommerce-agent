@@ -5,7 +5,6 @@ from starlette.concurrency import run_in_threadpool
 from app.core.security import PASSWORD_HASHER
 from app.models import Membership, Organization, Role, Shop, User
 
-
 DEMO_USERNAME = "ops.demo"
 DEMO_ORGANIZATION = "本地业务沙箱"
 DEMO_SHOP = "轻食旗舰店"

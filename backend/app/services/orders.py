@@ -4,11 +4,12 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Order, OrderItem, Product, Sku
+from app.core.clock import DEFAULT_SHOP_TIMEZONE
+from app.models import Order, OrderItem, Product, Shop, Sku
 from app.schemas.orders import OrderDetail, OrderLine, OrderSummary, SkuSales
 
-
-SHOP_TIMEZONE = ZoneInfo("Asia/Shanghai")
+# 采用支付件数口径：曾支付成功的订单均计入销量，后续退款不抵扣
+PAID_ORDER_STATUSES = ("paid", "partially_refunded", "refunded")
 
 
 def summarize(order: Order, sku_codes: list[str], quantity: int) -> OrderSummary:
@@ -56,22 +57,34 @@ async def get_order(session: AsyncSession, shop_id: int, order_id: int) -> Order
     return OrderDetail(**summary.model_dump(), items=items)
 
 
-async def sku_sales(session: AsyncSession, shop_id: int, sku_code: str, as_of: date) -> SkuSales | None:
+async def sku_sales(
+    session: AsyncSession,
+    shop_id: int,
+    sku_code: str,
+    as_of: date,
+    timezone_name: str | None = None,
+) -> SkuSales | None:
     sku_id = await session.scalar(select(Sku.id).where(Sku.shop_id == shop_id, Sku.sku_code == sku_code))
     if sku_id is None:
         return None
+    resolved_tz_name = timezone_name or (
+        await session.scalar(select(Shop.timezone).where(Shop.id == shop_id))
+    ) or DEFAULT_SHOP_TIMEZONE
+    shop_tz = ZoneInfo(resolved_tz_name)
     start_date = as_of - timedelta(days=7)
     query = (
         select(func.coalesce(func.sum(OrderItem.quantity), 0), func.count(distinct(Order.id)))
         .join(Order, and_(Order.id == OrderItem.order_id, Order.shop_id == OrderItem.shop_id))
         .where(
-            Order.shop_id == shop_id, OrderItem.sku_id == sku_id,
-            Order.paid_at >= datetime.combine(start_date, time.min, SHOP_TIMEZONE),
-            Order.paid_at < datetime.combine(as_of, time.min, SHOP_TIMEZONE),
+            Order.shop_id == shop_id,
+            OrderItem.sku_id == sku_id,
+            Order.status.in_(PAID_ORDER_STATUSES),
+            Order.paid_at >= datetime.combine(start_date, time.min, shop_tz),
+            Order.paid_at < datetime.combine(as_of, time.min, shop_tz),
         )
     )
     units, orders = (await session.execute(query)).one()
     return SkuSales(
-        sku_code=sku_code, units_sold=units, paid_orders=orders,
-        start_date=start_date, end_date=as_of, timezone=SHOP_TIMEZONE.key,
+        sku_code=sku_code, units_sold=int(units), paid_orders=int(orders),
+        start_date=start_date, end_date=as_of, timezone=shop_tz.key,
     )

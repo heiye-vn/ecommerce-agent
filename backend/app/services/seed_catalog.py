@@ -6,11 +6,20 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
-    Inventory, InventoryMovement, Membership, Order, OrderItem, Organization, PriceHistory,
-    Product, Role, Shop, Sku, User,
+    Inventory,
+    InventoryMovement,
+    Membership,
+    Order,
+    OrderItem,
+    Organization,
+    PriceHistory,
+    Product,
+    Role,
+    Shop,
+    Sku,
+    User,
 )
 from app.services.seed import DEMO_ORGANIZATION, DEMO_SHOP, DEMO_USERNAME
-
 
 SKU_CODE = "SKU-001"
 DEMO_DATE = datetime(2026, 11, 21, tzinfo=ZoneInfo("Asia/Shanghai"))

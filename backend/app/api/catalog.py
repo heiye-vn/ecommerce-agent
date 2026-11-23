@@ -4,7 +4,6 @@ from app.api.auth import AuthorizedShop, Database
 from app.schemas.catalog import CatalogSku
 from app.services.catalog import list_skus
 
-
 router = APIRouter(prefix="/api/shops", tags=["catalog"])
 
 
