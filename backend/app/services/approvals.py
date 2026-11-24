@@ -15,7 +15,9 @@ from app.schemas.approvals import (
     ApprovalSummary,
 )
 from app.services.audit import list_resource_audit_logs, write_audit_log
-from app.services.promotions import assert_promotion_transition, schedule_approved_promotion
+from app.services.jobs import enqueue_job_with_outbox, run_loaded_job
+from app.services.notifications import create_notification
+from app.services.promotions import assert_promotion_transition
 
 
 def _decision_boundary(
@@ -286,6 +288,17 @@ async def decide_approval(
             },
             metadata_json={"approval_id": approval.id, "approval_no": approval.approval_no},
         )
+        await create_notification(
+            session,
+            organization_id=organization_id,
+            shop_id=shop_id,
+            user_id=approval.requester_id,
+            category="approval",
+            title=f"审批单 {approval.approval_no} 已驳回",
+            content=f"{promotion.name}（{promotion.promotion_no}）被驳回：{approval.decision_comment}。",
+            resource_type="promotion",
+            resource_id=promotion.id,
+        )
         detail = await get_approval_detail(
             session, shop_id=shop_id, approval_id=approval.id, actor_id=actor_id, actor_roles=actor_roles
         )
@@ -316,19 +329,50 @@ async def decide_approval(
         },
         metadata_json={"approval_id": approval.id, "approval_no": approval.approval_no},
     )
+    await create_notification(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        user_id=approval.requester_id,
+        category="approval",
+        title=f"审批单 {approval.approval_no} 已批准",
+        content=f"{promotion.name}（{promotion.promotion_no} · V{promotion.version}）已获批，即将复核并排期。",
+        resource_type="promotion",
+        resource_id=promotion.id,
+    )
 
-    execution_status: str = "approved"
-    execution_message = "审批已通过，等待执行排期。"
+    job_payload = {
+        "promotion_id": promotion.id,
+        "promotion_no": promotion.promotion_no,
+        "promotion_name": promotion.name,
+        "approval_id": approval.id,
+        "approval_no": approval.approval_no,
+        "requester_id": approval.requester_id,
+        "actor_id": actor_id,
+    }
+    job, _ = await enqueue_job_with_outbox(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        job_type="promotion_schedule",
+        resource_type="promotion",
+        resource_id=promotion.id,
+        resource_version=approval.resource_version,
+        idempotency_key=f"promotion-schedule-{promotion.id}-v{approval.resource_version}",
+        payload=job_payload,
+        business_day=business_now.date(),
+        emit_outbox=not execute_schedule,
+    )
+
     if execute_schedule:
-        execution_status, execution_message = await schedule_approved_promotion(
+        execution_status, execution_message = await run_loaded_job(
             session,
-            organization_id=organization_id,
-            shop_id=shop_id,
-            promotion_id=promotion.id,
-            expected_version=approval.resource_version,
-            actor_id=actor_id,
+            job=job,
             business_now=business_now,
         )
+    else:
+        execution_status = "queued"
+        execution_message = f"审批已通过，排期任务 {job.job_no} 已入队等待后台复核与排期。"
 
     detail = await get_approval_detail(
         session, shop_id=shop_id, approval_id=approval.id, actor_id=actor_id, actor_roles=actor_roles
@@ -338,4 +382,6 @@ async def decide_approval(
         approval=detail,
         execution_status=execution_status,
         execution_message=execution_message,
+        job_id=job.id,
+        job_no=job.job_no,
     )

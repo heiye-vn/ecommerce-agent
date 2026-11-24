@@ -52,3 +52,5 @@ class ApprovalDecisionResponse(BaseModel):
     approval: ApprovalDetail
     execution_status: str | None = None
     execution_message: str
+    job_id: int | None = None
+    job_no: str | None = None

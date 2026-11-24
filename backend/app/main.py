@@ -8,6 +8,8 @@ from app.api.approvals import router as approvals_router
 from app.api.auth import router as auth_router
 from app.api.catalog import router as catalog_router
 from app.api.health import router as health_router
+from app.api.jobs import router as jobs_router
+from app.api.notifications import router as notifications_router
 from app.api.orders import router as orders_router
 from app.api.promotions import router as promotions_router
 from app.core.clock import BusinessClock
@@ -48,4 +50,6 @@ app.include_router(catalog_router)
 app.include_router(orders_router)
 app.include_router(promotions_router)
 app.include_router(approvals_router)
+app.include_router(jobs_router)
+app.include_router(notifications_router)
 app.include_router(agent_router)

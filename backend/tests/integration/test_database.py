@@ -64,6 +64,9 @@ def test_initial_migration_can_be_rolled_back_and_reapplied(
         "approvals",
         "operation_requests",
         "audit_logs",
+        "jobs",
+        "outbox_events",
+        "notifications",
     }
     command.downgrade(migrated_database, "base")
     assert expected_tables.isdisjoint(asyncio.run(table_names(database_url)))

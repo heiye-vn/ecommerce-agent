@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
-from app.api.auth import ApproverShop, AuthorizedShop, Clock, Database, reject_cross_origin
+from app.api.auth import AppConfig, ApproverShop, AuthorizedShop, Clock, Database, reject_cross_origin
 from app.core.errors import AppError
 from app.schemas.approvals import (
     ApprovalDecisionRequest,
@@ -54,6 +54,7 @@ async def approve_approval(
     shop: ApproverShop,
     session: Database,
     clock: Clock,
+    settings: AppConfig,
     approval_id: Annotated[int, Path(gt=0, le=2_147_483_647)],
     payload: ApprovalDecisionRequest | None = None,
 ) -> ApprovalDecisionResponse:
@@ -67,6 +68,7 @@ async def approve_approval(
         decision="approve",
         comment=payload.comment if payload else None,
         business_now=clock.now(shop.timezone),
+        execute_schedule=settings.async_execution_mode == "inline",
     )
 
 

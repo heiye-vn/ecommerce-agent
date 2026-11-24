@@ -8,6 +8,14 @@ from app.core.security import AuthSettings
 DEFAULT_SANDBOX_BUSINESS_DATE = date(2026, 11, 21)
 SUPPORTED_LLM_PROVIDERS = ("dashscope", "openai_relay")
 StructuredOutputMode = Literal["function_calling", "json_schema"]
+AsyncExecutionMode = Literal["outbox", "inline"]
+
+
+def _normalize_async_mode(value: str | None) -> AsyncExecutionMode:
+    normalized = (value or "outbox").strip().lower()
+    if normalized == "inline":
+        return "inline"
+    return "outbox"
 
 
 def _normalize_structured_mode(
@@ -41,6 +49,7 @@ class AppSettings:
     llm_provider: str
     llm_channels: dict[str, LLMChannelSettings]
     sandbox_business_date: date | None
+    async_execution_mode: AsyncExecutionMode = "outbox"
 
     @classmethod
     def load(cls) -> "AppSettings":
@@ -87,12 +96,18 @@ class AppSettings:
             llm_provider=provider,
             llm_channels=channels,
             sandbox_business_date=sandbox_business_date,
+            async_execution_mode=_normalize_async_mode(get("ASYNC_EXECUTION_MODE")),
         )
 
     def require_database_url(self) -> str:
         if not self.database_url:
             raise RuntimeError("DATABASE_URL must be set in the environment or the project .env")
         return self.database_url
+
+    def require_rabbitmq_url(self) -> str:
+        if not self.rabbitmq_url:
+            raise RuntimeError("RABBITMQ_URL must be set in the environment or the project .env")
+        return self.rabbitmq_url
 
     def require_auth(self) -> AuthSettings:
         return AuthSettings.from_values(self.auth_secret, self.auth_cookie_secure)

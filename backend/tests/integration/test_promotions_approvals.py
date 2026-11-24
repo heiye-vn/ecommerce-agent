@@ -37,6 +37,7 @@ def stage2_client(database_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterato
     monkeypatch.setenv("AUTH_JWT_SECRET", "test-only-signing-key-with-more-than-32-bytes")
     monkeypatch.setenv("AUTH_COOKIE_SECURE", "true")
     monkeypatch.setenv("SANDBOX_BUSINESS_DATE", "2026-11-21")
+    monkeypatch.setenv("ASYNC_EXECUTION_MODE", "inline")
     config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
     command.upgrade(config, "head")
     try:

@@ -21,6 +21,7 @@ from app.schemas.promotions import (
 )
 from app.services.audit import list_resource_audit_logs, write_audit_log
 from app.services.idempotency import claim_idempotency, complete_idempotency
+from app.services.notifications import create_notification, notify_shop_roles
 from app.services.orders import sku_sales
 
 MINIMUM_PROMOTION_QTY = 100
@@ -344,6 +345,18 @@ async def submit_promotion(
         },
         metadata_json={"approval_id": approval.id, "idempotency_key": idempotency_key},
     )
+    await notify_shop_roles(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        roles=(Role.APPROVER,),
+        category="approval",
+        title=f"待审批促销：{activity_name}",
+        content=f"{promotion_no}（V1 · {sku_code} · 活动价 ¥{promotion_price}）已提交审批，请审阅快照。",
+        resource_type="approval",
+        resource_id=approval.id,
+        exclude_user_id=actor_id,
+    )
 
     response = PromotionSubmitResponse(
         promotion_id=promotion.id,
@@ -617,6 +630,21 @@ async def revise_promotion(
         },
         metadata_json={"revision_reason": payload.reason, "approval_id": approval.id},
     )
+    await notify_shop_roles(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        roles=(Role.APPROVER,),
+        category="approval",
+        title=f"待审批修订促销：{promotion.name}（V{next_version}）",
+        content=(
+            f"{promotion.promotion_no} 已提交修订版本 V{next_version}"
+            f"（{sku_code} · 活动价 ¥{promotion_price}），请审阅。"
+        ),
+        resource_type="approval",
+        resource_id=approval.id,
+        exclude_user_id=actor_id,
+    )
 
     response = PromotionSubmitResponse(
         promotion_id=promotion.id,
@@ -773,6 +801,190 @@ async def schedule_approved_promotion(
         },
     )
     return "scheduled", f"业务复核通过，活动 {promotion.promotion_no} 已成功排期。"
+
+
+async def _mark_missed_window_completed(
+    session: AsyncSession,
+    *,
+    organization_id: int,
+    shop_id: int,
+    promotion: Promotion,
+    actor_id: int,
+    business_now: datetime,
+) -> tuple[str, str]:
+    before_state = {"status": promotion.status, "version": promotion.version}
+    reason = "错过生效时段：调度恢复时活动已超过结束时间，系统直接标记为已结束。"
+    assert_promotion_transition(promotion.status, "completed")
+    promotion.status = "completed"
+    promotion.failure_reason = reason
+    await write_audit_log(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        actor_id=actor_id,
+        action="promotion.missed_window",
+        resource_type="promotion",
+        resource_id=promotion.id,
+        before_json=before_state,
+        after_json={
+            "status": "completed",
+            "version": promotion.version,
+            "failure_reason": reason,
+            "business_now": business_now.isoformat(),
+        },
+    )
+    await create_notification(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        user_id=promotion.created_by,
+        category="promotion",
+        title=f"活动 {promotion.promotion_no} 已错过生效时段",
+        content=f"{promotion.name}（{promotion.promotion_no}）调度恢复时已过结束时间，已直接结束并记录审计。",
+        resource_type="promotion",
+        resource_id=promotion.id,
+    )
+    return "completed", reason
+
+
+async def activate_scheduled_promotion(
+    session: AsyncSession,
+    *,
+    organization_id: int,
+    shop_id: int,
+    promotion_id: int,
+    actor_id: int,
+    business_now: datetime,
+) -> tuple[str, str]:
+    """到点生效调度：scheduled -> active；若恢复时整个时段已过则直接进入 completed。"""
+    promotion = await session.scalar(
+        select(Promotion)
+        .where(Promotion.shop_id == shop_id, Promotion.id == promotion_id)
+        .with_for_update()
+    )
+    if promotion is None:
+        raise AppError(404, "PROMOTION_NOT_FOUND", "当前店铺没有找到该促销活动。", detail="Promotion not found")
+    if promotion.status in ("active", "completed"):
+        return promotion.status, f"活动 {promotion.promotion_no} 已处于 {promotion.status} 状态。"
+    if promotion.status != "scheduled":
+        raise AppError(
+            409,
+            "INVALID_PROMOTION_STATE",
+            f"当前活动状态（{promotion.status}）不能执行生效流转。",
+            detail=f"Cannot activate promotion in status {promotion.status}",
+        )
+    if business_now >= promotion.ends_at:
+        return await _mark_missed_window_completed(
+            session,
+            organization_id=organization_id,
+            shop_id=shop_id,
+            promotion=promotion,
+            actor_id=actor_id,
+            business_now=business_now,
+        )
+    if business_now < promotion.starts_at:
+        return "scheduled", f"活动 {promotion.promotion_no} 尚未到达开始时间。"
+
+    before_state = {"status": promotion.status, "version": promotion.version}
+    assert_promotion_transition(promotion.status, "active")
+    promotion.status = "active"
+    await write_audit_log(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        actor_id=actor_id,
+        action="promotion.activated",
+        resource_type="promotion",
+        resource_id=promotion.id,
+        before_json=before_state,
+        after_json={
+            "status": "active",
+            "version": promotion.version,
+            "activated_at": business_now.isoformat(),
+        },
+    )
+    await create_notification(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        user_id=promotion.created_by,
+        category="promotion",
+        title=f"促销活动 {promotion.promotion_no} 已到点生效",
+        content=f"{promotion.name}（{promotion.promotion_no}）已按店铺时区自动转为生效中。",
+        resource_type="promotion",
+        resource_id=promotion.id,
+    )
+    return "active", f"活动 {promotion.promotion_no} 已到点生效。"
+
+
+async def complete_active_promotion(
+    session: AsyncSession,
+    *,
+    organization_id: int,
+    shop_id: int,
+    promotion_id: int,
+    actor_id: int,
+    business_now: datetime,
+) -> tuple[str, str]:
+    """到期结束调度：active -> completed；若 scheduled 错过窗口也直接结束。"""
+    promotion = await session.scalar(
+        select(Promotion)
+        .where(Promotion.shop_id == shop_id, Promotion.id == promotion_id)
+        .with_for_update()
+    )
+    if promotion is None:
+        raise AppError(404, "PROMOTION_NOT_FOUND", "当前店铺没有找到该促销活动。", detail="Promotion not found")
+    if promotion.status == "completed":
+        return "completed", f"活动 {promotion.promotion_no} 已结束。"
+    if promotion.status == "scheduled" and business_now >= promotion.ends_at:
+        return await _mark_missed_window_completed(
+            session,
+            organization_id=organization_id,
+            shop_id=shop_id,
+            promotion=promotion,
+            actor_id=actor_id,
+            business_now=business_now,
+        )
+    if promotion.status != "active":
+        raise AppError(
+            409,
+            "INVALID_PROMOTION_STATE",
+            f"当前活动状态（{promotion.status}）不能执行结束流转。",
+            detail=f"Cannot complete promotion in status {promotion.status}",
+        )
+    if business_now < promotion.ends_at:
+        return "active", f"活动 {promotion.promotion_no} 尚未到达结束时间。"
+
+    before_state = {"status": promotion.status, "version": promotion.version}
+    assert_promotion_transition(promotion.status, "completed")
+    promotion.status = "completed"
+    await write_audit_log(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        actor_id=actor_id,
+        action="promotion.completed",
+        resource_type="promotion",
+        resource_id=promotion.id,
+        before_json=before_state,
+        after_json={
+            "status": "completed",
+            "version": promotion.version,
+            "completed_at": business_now.isoformat(),
+        },
+    )
+    await create_notification(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        user_id=promotion.created_by,
+        category="promotion",
+        title=f"促销活动 {promotion.promotion_no} 已到期结束",
+        content=f"{promotion.name}（{promotion.promotion_no}）活动时段已结束，状态已更新为已结束。",
+        resource_type="promotion",
+        resource_id=promotion.id,
+    )
+    return "completed", f"活动 {promotion.promotion_no} 已到期结束。"
 
 
 async def list_promotions(session: AsyncSession, *, shop_id: int) -> list[PromotionSummary]:
