@@ -1,9 +1,11 @@
 import { App as AntApp, Button, Select, Space, Typography } from "antd"
 import {
   AppstoreOutlined,
+  BellOutlined,
   FileSearchOutlined,
   LineChartOutlined,
   SafetyCertificateOutlined,
+  ScheduleOutlined,
   ShoppingCartOutlined,
   TagOutlined,
 } from "@ant-design/icons"
@@ -20,6 +22,7 @@ const navigationItems = [
   { key: "orders", label: "订单售后", to: "/orders", group: "业务" },
   { key: "analytics", label: "经营分析", to: "/analytics", group: "业务" },
   { key: "approvals", label: "审批中心", to: "/approvals", group: "系统管理" },
+  { key: "tasks", label: "任务中心", to: "/tasks", group: "系统管理" },
 ]
 
 type AppProps = {
@@ -27,6 +30,7 @@ type AppProps = {
   userName?: string
   shops?: ShopAccess[]
   activeShopId?: number
+  unreadCount?: number
   onSelectShop?: (shopId: number) => void
   onLogout: () => Promise<void>
   children?: ReactNode
@@ -37,6 +41,7 @@ export default function App({
   userName,
   shops,
   activeShopId,
+  unreadCount = 0,
   onSelectShop,
   onLogout,
   children,
@@ -49,7 +54,7 @@ export default function App({
     try {
       await onLogout()
     } catch {
-      void message.error("暂时无法退出登录，请重试。")
+      message?.error?.("暂时无法退出登录，请重试。")
     } finally {
       setSigningOut(false)
     }
@@ -63,6 +68,7 @@ export default function App({
     if (key === "promotions") return <TagOutlined />
     if (key === "orders") return <FileSearchOutlined />
     if (key === "approvals") return <SafetyCertificateOutlined />
+    if (key === "tasks") return <ScheduleOutlined />
     return <LineChartOutlined />
   }
 
@@ -84,6 +90,16 @@ export default function App({
           ) : (
             <span className={styles.shop}>{shopName}</span>
           )}
+          <NavLink
+            to="/notifications"
+            aria-label="通知中心"
+            className={({ isActive }) =>
+              `${styles.notifButton} ${isActive ? styles.notifButtonActive : ""}`
+            }
+          >
+            <BellOutlined aria-hidden="true" />
+            {unreadCount > 0 && <span className={styles.unreadPill}>{unreadCount}</span>}
+          </NavLink>
           {userName && <span className={styles.userBadge}>{userName}</span>}
           <Button onClick={handleLogout} loading={signingOut}>退出登录</Button>
         </div>

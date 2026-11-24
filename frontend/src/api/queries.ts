@@ -176,6 +176,70 @@ export type ApprovalDecisionResponse = {
   approval: ApprovalDetail
   execution_status: string | null
   execution_message: string
+  job_id?: number | null
+  job_no?: string | null
+}
+
+export type JobStatus = "pending" | "running" | "succeeded" | "retrying" | "failed" | "dead_lettered"
+export type JobType = "promotion_schedule" | "promotion_activate" | "promotion_complete"
+export type JobTab = "all" | "needs_attention" | "completed"
+
+export type JobSummary = {
+  id: number
+  job_no: string
+  job_type: JobType
+  status: JobStatus
+  resource_type: string
+  resource_id: number
+  resource_no: string
+  resource_name: string
+  resource_version: number
+  attempts: number
+  max_attempts: number
+  available_at: string
+  last_error: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type JobDetail = JobSummary & {
+  idempotency_key: string
+  payload: Record<string, unknown>
+  result_json: Record<string, unknown> | null
+  resource_status: string | null
+  can_retry: boolean
+  retry_hint: string | null
+  audit_logs: AuditLogEntry[]
+}
+
+export type JobRetryResponse = {
+  job: JobDetail
+  message: string
+}
+
+export type NotificationCategory = "approval" | "promotion" | "job"
+
+export type NotificationItem = {
+  id: number
+  category: NotificationCategory
+  title: string
+  content: string
+  resource_type: string | null
+  resource_id: number | null
+  is_read: boolean
+  read_at: string | null
+  created_at: string
+}
+
+export type NotificationListResponse = {
+  items: NotificationItem[]
+  unread_count: number
+}
+
+export type ReadAllResponse = {
+  updated_count: number
 }
 
 export function createQueryClient() {
@@ -276,4 +340,39 @@ export function rejectApprovalRequest(auth: ShopReadProps, approvalId: number, c
   return fetchShopJson<ApprovalDecisionResponse>(`approvals/${approvalId}/reject`, auth, {
     payload: { comment },
   })
+}
+
+export function useJobsQuery(auth: ShopReadProps, tab: JobTab) {
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "jobs", tab],
+    queryFn: ({ signal }) => fetchShopJson<JobSummary[]>(`jobs?tab=${tab}`, auth, { signal }),
+  })
+}
+
+export function useJobDetailQuery(auth: ShopReadProps, jobId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "jobs", "detail", jobId],
+    queryFn: ({ signal }) => fetchShopJson<JobDetail>(`jobs/${jobId}`, auth, { signal }),
+    enabled,
+  })
+}
+
+export function retryJobRequest(auth: ShopReadProps, jobId: number) {
+  return fetchShopJson<JobRetryResponse>(`jobs/${jobId}/retry`, auth, { payload: {} })
+}
+
+export function useNotificationsQuery(auth: ShopReadProps, unreadOnly: boolean) {
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "notifications", unreadOnly],
+    queryFn: ({ signal }) =>
+      fetchShopJson<NotificationListResponse>(`notifications?unread_only=${unreadOnly}`, auth, { signal }),
+  })
+}
+
+export function markNotificationReadRequest(auth: ShopReadProps, notificationId: number) {
+  return fetchShopJson<NotificationItem>(`notifications/${notificationId}/read`, auth, { payload: {} })
+}
+
+export function markAllNotificationsReadRequest(auth: ShopReadProps) {
+  return fetchShopJson<ReadAllResponse>("notifications/read-all", auth, { payload: {} })
 }

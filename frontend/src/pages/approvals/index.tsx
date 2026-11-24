@@ -242,7 +242,11 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
 
   const [comment, setComment] = useState("")
   const [submitting, setSubmitting] = useState<"approve" | "reject" | null>(null)
-  const [resultBanner, setResultBanner] = useState<{ type: "success" | "warning" | "error"; text: string } | null>(null)
+  const [resultBanner, setResultBanner] = useState<{
+    type: "success" | "warning" | "error"
+    text: string
+    jobId?: number | null
+  } | null>(null)
 
   async function handleDecision(action: "approve" | "reject") {
     if (!detail) return
@@ -259,11 +263,19 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
           : await rejectApprovalRequest(props, detail.id, comment.trim())
       await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "approvals"] })
       await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "promotions"] })
-      if (response.execution_status === "scheduled") {
-        setResultBanner({ type: "success", text: response.execution_message })
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "jobs"] })
+      if (response.execution_status === "queued") {
+        setResultBanner({
+          type: "success",
+          text: response.execution_message || "审批已通过，排期任务已入队。",
+          jobId: response.job_id,
+        })
+        message?.success?.("审批已通过，排期任务已入队")
+      } else if (response.execution_status === "scheduled") {
+        setResultBanner({ type: "success", text: response.execution_message, jobId: response.job_id })
         message?.success?.("审批通过，业务复核并排期成功")
       } else if (response.execution_status === "failed") {
-        setResultBanner({ type: "warning", text: response.execution_message })
+        setResultBanner({ type: "warning", text: response.execution_message, jobId: response.job_id })
         message?.warning?.("审批已通过，但实时业务复核未通过")
       } else {
         setResultBanner({ type: "success", text: response.execution_message })
@@ -374,7 +386,13 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
               </div>
 
               {resultBanner && (
-                <Alert type={resultBanner.type} showIcon message={resultBanner.text} style={{ marginBottom: 12 }} />
+                <Alert
+                  type={resultBanner.type}
+                  showIcon
+                  message={resultBanner.text}
+                  action={resultBanner.jobId ? <Link className={styles.outlineLinkBtn} to={`/tasks/${resultBanner.jobId}`}>查看执行任务</Link> : undefined}
+                  style={{ marginBottom: 12 }}
+                />
               )}
               {detail.resource_failure_reason && !resultBanner && (
                 <Alert type="warning" showIcon message="排期复核结果" description={detail.resource_failure_reason} style={{ marginBottom: 12 }} />

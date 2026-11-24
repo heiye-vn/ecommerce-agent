@@ -46,6 +46,11 @@ const auditActionLabels: Record<string, string> = {
   "approval.rejected": "人工审批驳回",
   "promotion.scheduled": "业务复核通过并排期",
   "promotion.schedule_failed": "业务复核失败",
+  "promotion.activated": "到点自动生效",
+  "promotion.completed": "到期自动结束",
+  "promotion.missed_window": "错过生效时段已结束",
+  "job.dead_lettered": "重试超限转入死信队列",
+  "job.manual_retry": "人工按原操作重新投递",
 }
 
 const dateTime = new Intl.DateTimeFormat("sv-SE", {
