@@ -13,6 +13,7 @@
 - 遵循 `docs/product-design.md` 中定义的模块化单体边界：`backend/app/api/` 和 `backend/app/agent/tools.py` 必须通过 `backend/app/services/` 调用，严禁绕过服务层直接修改业务表，且 Agent 工具绝不允许执行审批操作。
 - 测试代码放在专用目录中（`backend/tests/` 使用 pytest，`frontend/tests/` 使用 Vitest）；不要将测试文件与应用源码放在一起。
 - 双 LLM 渠道切换（DashScope / OpenAI 中转站）仅保留在后端 `.env` 配置中；不要在 UI 中暴露模型切换控件。
+- 各阶段实施计划与验证报告归档至 `docs/deliverables/`，该目录仅保存实施计划和验证报告 Markdown 文件，不保存截图、索引或其他文件。
 
 ## UI 设计工作流
 
