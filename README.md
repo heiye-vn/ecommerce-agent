@@ -9,22 +9,24 @@ CommerceAgent 是一个仅面向桌面端的可控执行型电商运营 Agent �
 
 ## 项目状态
 
-当前仓库已进入**阶段 1 基础数据开发**，包含：
+当前仓库已完成**阶段 3（可靠异步任务、重试、补偿与通知）**核心开发，包含：
 
 - 产品定位、业务规则、核心表结构与分阶段计划的[产品设计](docs/product-design.md)。
+- [各阶段实施计划与交付验证报告](docs/deliverables/)。
 - 视觉规范 [DESIGN.md](DESIGN.md)。
 - 68 张桌面端 UI 原型图与阅读索引，见 [prototypes/README.md](prototypes/README.md)。
-- FastAPI 后端骨架与健康检查接口。
+- FastAPI 后端骨架与健康检查接口（含 PostgreSQL、Redis、RabbitMQ 就绪探测）。
 - PostgreSQL 异步连接与组织、用户、店铺、成员授权表的初始迁移。
 - React + Ant Design 桌面工作台外壳。
 - 账号登录、会话恢复与退出，以及按服务端授权读取店铺。
 - 商品、SKU、库存、价格历史和订单的数据库迁移，以及固定沙箱样例初始化脚本。
 - 商品运营页：按当前授权店铺查询 SKU、售价和库存，支持搜索、筛选与分页。
 - 订单售后页：按当前授权店铺查询订单和商品明细，支持订单号、SKU、状态及支付日期筛选。
-- Agent 对话：单次只读销量查询，返回当前店铺数据库事实、统计区间和工具调用次数。
+- **阶段 2**：促销管理、审批工作台、幂等与行锁并发排期、审计日志、Agent 多轮追问与显式确认闭环。
+- **阶段 3**：PostgreSQL Outbox + RabbitMQ 可靠异步任务（`jobs` / `outbox_events` / `notifications`）、独立 Outbox Publisher / Consumer / Scheduler 进程、指数退避重试与 DLX/DLQ 死信人工重试、任务中心（`/tasks`）与通知中心（`/notifications`）。
 - PostgreSQL(pgvector)、Redis 与 RabbitMQ 的本地 Compose 编排。
 
-商品详情、库存流水、调价记录、履约和退款操作尚未接入前端；促销、审批和 Agent 闭环留到阶段 2。
+商品详情、库存流水、调价记录、履约、退款、知识库与活动复盘留待阶段 4 及后续阶段开发。
 
 ## 核心设计
 
@@ -65,6 +67,7 @@ CommerceAgent 是一个仅面向桌面端的可控执行型电商运营 Agent �
 ├── DESIGN.md
 ├── README.md
 ├── docs/
+│   ├── deliverables/
 │   └── product-design.md
 └── prototypes/
     ├── README.md
@@ -113,6 +116,7 @@ uv sync
 uv run alembic upgrade head
 uv run python -m scripts.seed
 uv run python -m scripts.seed_catalog
+uv run python -m scripts.seed_stage2   # 可选：初始化阶段 2 促销与审批演示数据
 uv run uvicorn app.main:app --host 127.0.0.1 --port 7620
 ```
 
@@ -124,9 +128,19 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 7620
 
 在「Agent 对话」发送 `查一下 SKU-001 最近 7 天销量` 可用同一口径查询。当前支持单个沙箱 SKU（如 `SKU-001`，输入大小写不敏感），使用 2026-11-21 作为固定业务日。模型根据输入识别意图，销量由服务层计算。使用前在后端 `.env` 中为选定的 `LLM_PROVIDER` 配好 `BASE_URL`、`API_KEY` 和 `DEFAULT_MODEL`。请勿在问题中输入敏感信息。
 
-也可点击「试用促销方案预览」，发送示例后回复 `11 月 22 日开始`。服务层会按售价和折扣核算促销价，并按上海时间展示活动区间。库存门槛为 100 件。此阶段为只读预览，活动时段冲突校验和审批提交留到后续阶段。
+也可点击「试用促销方案预览」或直接发送促销排期需求（如 `对 SKU-001 在 11 月 22 日开始做 8 折促销`），在「Agent 对话」内完成多轮追问、显式确认与审批提单闭环。服务层会按售价和折扣核算促销价、校验库存门槛（100 件）与活动时段冲突，并按上海时间展示活动区间。
 
-4. 启动前端：
+4. 启动阶段 3 异步任务进程（当 `.env` 中 `ASYNC_EXECUTION_MODE=outbox` 时，默认开启）：
+
+在 `.env` 中通过 `ASYNC_EXECUTION_MODE` 控制审批通过后的执行方式：`outbox`（默认）会在同一事务写入任务与 Outbox 事件，由 RabbitMQ 异步投递执行；设为 `inline` 则在本地请求内同步直执行。使用 `outbox` 模式时，需在独立终端分别启动以下 3 个后台进程：
+
+```bash
+cd backend && uv run python -m app.workers.outbox_publisher
+cd backend && uv run python -m app.workers.consumer
+cd backend && uv run python -m app.workers.scheduler
+```
+
+5. 启动前端：
 
 ```bash
 cd frontend
@@ -134,7 +148,7 @@ npm install
 npm run dev
 ```
 
-后端健康检查：<http://localhost:7620/api/health>；登录页：<http://localhost:7630/login>。登录后进入工作台；重新打开页面时可通过 HttpOnly Cookie 恢复会话。开发和预览服务器通过同源 `/api` 代理访问后端；如使用其他后端端口，启动前端时设置 `API_PROXY_TARGET`。
+后端健康检查：<http://localhost:7620/api/health>（就绪检查：<http://localhost:7620/api/health/ready>）；登录页：<http://localhost:7630/login>。登录后进入工作台；重新打开页面时可通过 HttpOnly Cookie 恢复会话。开发和预览服务器通过同源 `/api` 代理访问后端；如使用其他后端端口，启动前端时设置 `API_PROXY_TARGET`。
 
 ## 测试
 
@@ -143,4 +157,4 @@ cd backend && uv run pytest
 cd frontend && npm test -- --run
 ```
 
-后端集成测试需要 Docker，由 Testcontainers 启动独立 PostgreSQL，不会修改 Compose 中的数据库。单独运行单元测试用 `uv run pytest tests/unit`。若本地仅因无法拉取 Ryuk 清理镜像而无法启动测试，可用 `TESTCONTAINERS_RYUK_DISABLED=true uv run pytest`；测试正常结束时仍会移除临时容器。
+后端集成测试需要 Docker，由 Testcontainers 启动独立 PostgreSQL，不会修改 Compose 中的数据库；其中阶段 3 集成测试（`tests/integration/test_stage3_reliability.py`）还会连接本机 Compose 的 RabbitMQ（`localhost:7602`），使用独立随机前缀的测试 Exchange/Queue 并在测试结束后自动清理。单独运行单元测试用 `uv run pytest tests/unit`。若本地仅因无法拉取 Ryuk 清理镜像而无法启动测试，可用 `TESTCONTAINERS_RYUK_DISABLED=true uv run pytest`；测试正常结束时仍会移除临时容器。
