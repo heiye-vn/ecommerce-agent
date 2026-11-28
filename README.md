@@ -9,7 +9,7 @@ CommerceAgent 是一个仅面向桌面端的可控执行型电商运营 Agent �
 
 ## 项目状态
 
-当前仓库已完成**阶段 4（退款售后闭环、售后 Agent 与并发库存控制）**核心开发，包含：
+当前仓库已完成**阶段 5（阶段 5A 调价审批与经营分析 + 阶段 5B 知识库 `pgvector` 混合检索与百炼重排）**核心开发，包含：
 
 - 产品定位、业务规则、核心表结构与分阶段计划的[产品设计](docs/product-design.md)。
 - [各阶段实施计划与交付验证报告](docs/deliverables/)。
@@ -25,9 +25,11 @@ CommerceAgent 是一个仅面向桌面端的可控执行型电商运营 Agent �
 - **阶段 2**：促销管理、审批工作台、幂等与行锁并发排期、审计日志、Agent 多轮追问与显式确认闭环。
 - **阶段 3**：PostgreSQL Outbox + RabbitMQ 可靠异步任务（`jobs` / `outbox_events` / `notifications`）、独立 Outbox Publisher / Consumer / Scheduler 进程、指数退避重试与 DLX/DLQ 死信人工重试、任务中心（`/tasks`）与通知中心（`/notifications`）。
 - **阶段 4**：退款售后闭环（`refunds` 并发互斥、审批快照裁决、Outbox + RabbitMQ `commerce.jobs.refund` 异步执行、二次实时复核、DLQ 死信恢复与撤回）、库存并发控制与不可变流水（行级 `FOR UPDATE` + `expected_version` 乐观锁 + `Idempotency-Key`、SKU 低库存预警）、订单售后 Agent（只读查单/异常诊断/多轮追问/`confirm_plan` 幂等送审）及桌面端配套工作台。
+- **阶段 5A**：调价审批执行闭环（`price_change_requests` 同 SKU 并发互斥、成本底线/未调价拦截、Outbox + RabbitMQ `commerce.jobs.price_change` 异步执行、二次实时复核原价防漂移、不可变 `price_histories` 追加与撤回/死信恢复）、调价 Agent 缺参追问与 `confirm_plan` 幂等送审、经营分析（概览含客单价、完整自然日日报、件数口径库存周转）与促销活动复盘 API，以及接入 Apache ECharts 的调价/分析/活动复盘桌面端工作台。
+- **阶段 5B**：知识库管理与 RAG 混合检索闭环（`knowledge_documents` / `knowledge_chunks` + PostgreSQL `pgvector` 1024 维向量检索 + 词法 `TSVECTOR` GIN 检索 + RRF 融合 + 阿里百炼 `qwen3.7-text-embedding-flash` & `qwen3.7-text-rerank` 精排及超时降级）、前置组织/店铺/角色与当前已索引版本隔离、Agent 规则问答引用来源与只读隔离声明，以及桌面端知识库管理页（`/knowledge`）与引用预览面板。
 - PostgreSQL(pgvector)、Redis 与 RabbitMQ 的本地 Compose 编排。
 
-调价审批、经营分析看板、知识库与活动复盘留待阶段 5 及后续阶段开发。
+故障模拟、评测、部署与演示优化（阶段 6）将在后续按计划推进。
 
 ## 核心设计
 
@@ -43,10 +45,10 @@ CommerceAgent 是一个仅面向桌面端的可控执行型电商运营 Agent �
 | 层 | 技术 |
 | --- | --- |
 | 后端 | FastAPI、SQLAlchemy 2.x、Pydantic、pytest |
-| 数据库 | PostgreSQL、Alembic |
+| 数据库 | PostgreSQL（pgvector）、Alembic |
 | 异步任务 | RabbitMQ、PostgreSQL Outbox、Worker、Scheduler |
-| Agent | LangGraph、LangChain、OpenAI 兼容接口 |
-| 前端 | React、TypeScript、Vite、Ant Design 5、Vitest |
+| Agent | LangGraph、LangChain、OpenAI 兼容接口、pgvector + 词法 RRF、百炼 Embedding / Rerank |
+| 前端 | React、TypeScript、Vite、Ant Design 5、ECharts、Vitest |
 
 双模型渠道（DashScope / OpenAI 中转站）仅通过后端 `.env` 配置切换，前端不提供模型切换控件。
 
@@ -119,6 +121,8 @@ uv run python -m scripts.seed
 uv run python -m scripts.seed_catalog
 uv run python -m scripts.seed_stage2   # 可选：初始化阶段 2 促销与审批演示数据
 uv run python -m scripts.seed_stage4   # 可选：初始化阶段 4 低库存预警与异常订单演练数据
+uv run python -m scripts.seed_stage5a   # 可选：初始化阶段 5A 多日经营分析、活动复盘与调价历史演练数据
+uv run python -m scripts.seed_stage5b   # 可选：初始化阶段 5B 知识库 5 份规则文档与 1024 维百炼向量
 uv run uvicorn app.main:app --host 127.0.0.1 --port 7620
 ```
 
@@ -132,7 +136,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 7620
 
 也可点击「试用促销方案预览」或直接发送促销排期需求（如 `对 SKU-001 在 11 月 22 日开始做 8 折促销`），在「Agent 对话」内完成多轮追问、显式确认与审批提单闭环。服务层会按售价和折扣核算促销价、校验库存门槛（100 件）与活动时段冲突，并按上海时间展示活动区间。
 
-4. 启动异步任务进程（当 `.env` 中 `ASYNC_EXECUTION_MODE=outbox` 时，默认开启；其中 `app.workers.consumer` 会并发消费促销与退款两条执行队列，无需额外进程）：
+4. 启动异步任务进程（当 `.env` 中 `ASYNC_EXECUTION_MODE=outbox` 时，默认开启；其中 `app.workers.consumer` 会并发消费促销、退款与调价三条执行队列，仍为 3 个 Worker 进程，无需额外进程）：
 
 在 `.env` 中通过 `ASYNC_EXECUTION_MODE` 控制审批通过后的执行方式：`outbox`（默认）会在同一事务写入任务与 Outbox 事件，由 RabbitMQ 异步投递执行；设为 `inline` 则在本地请求内同步直执行。使用 `outbox` 模式时，需在独立终端分别启动以下 3 个后台进程：
 
@@ -159,4 +163,4 @@ cd backend && uv run pytest
 cd frontend && npm test -- --run
 ```
 
-后端集成测试需要 Docker，由 Testcontainers 启动独立 PostgreSQL，不会修改 Compose 中的数据库；其中阶段 3 与阶段 4 集成测试（`tests/integration/test_stage3_reliability.py`、`tests/integration/test_stage4_refunds_inventory.py`）还会连接本机 Compose 的 RabbitMQ（`localhost:7602`），使用独立随机前缀的测试 Exchange/Queue 并在测试结束后自动清理；售后 Agent 对照评测位于 `tests/agent/test_stage4_refund_agent.py`。单独运行单元测试用 `uv run pytest tests/unit`。若本地仅因无法拉取 Ryuk 清理镜像而无法启动测试，可用 `TESTCONTAINERS_RYUK_DISABLED=true uv run pytest`；测试正常结束时仍会移除临时容器。
+后端集成测试需要 Docker，由 Testcontainers 启动独立 PostgreSQL，不会修改 Compose 中的数据库；其中阶段 3、阶段 4 与阶段 5A 集成测试（`tests/integration/test_stage3_reliability.py`、`tests/integration/test_stage4_refunds_inventory.py`、`tests/integration/test_stage5a_price_analytics.py`）还会连接本机 Compose 的 RabbitMQ（`localhost:7602`），使用独立随机前缀的测试 Exchange/Queue 并在测试结束后自动清理；阶段 5B 知识库 `pgvector` 混合检索、Rerank 降级与 Agent 规则问答测试分别位于 `tests/unit/test_stage5b_rag_clients.py`、`tests/integration/test_stage5b_knowledge_rag.py` 与 `tests/agent/test_stage5b_knowledge_agent.py`；售后与调价 Agent 对照评测分别位于 `tests/agent/test_stage4_refund_agent.py` 与 `tests/agent/test_stage5a_price_agent.py`。单独运行单元测试用 `uv run pytest tests/unit`。若本地仅因无法拉取 Ryuk 清理镜像而无法启动测试，可用 `TESTCONTAINERS_RYUK_DISABLED=true uv run pytest`；测试正常结束时仍会移除临时容器。
