@@ -45,6 +45,8 @@ async def query_agent(
                 "message": payload.message,
                 "prior_context": loaded.prior_promotion,
                 "pending_plan": loaded.pending_plan,
+                "prior_refund_context": loaded.prior_refund,
+                "pending_refund_plan": loaded.pending_refund_plan,
             },
             context={
                 "organization_id": shop.organization_id,

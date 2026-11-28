@@ -7,9 +7,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.orders import SkuSales
 from app.schemas.promotions import PromotionSubmitResponse
+from app.schemas.refunds import RefundSubmitResponse
 
 SKU_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_-])SKU-[A-Za-z0-9][A-Za-z0-9_-]{0,59}(?![A-Za-z0-9_-])",
+    re.IGNORECASE | re.ASCII,
+)
+ORDER_NO_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:ORD|DEMO)-[A-Za-z0-9][A-Za-z0-9_-]{0,59}(?![A-Za-z0-9_-])",
     re.IGNORECASE | re.ASCII,
 )
 
@@ -54,6 +59,63 @@ class PromotionPreview(BaseModel):
     plan_key: str | None = None
 
 
+class RefundContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shop_id: int = Field(gt=0, le=2_147_483_647)
+    order_id: int = Field(gt=0, le=2_147_483_647)
+    order_no: str = Field(max_length=64)
+    amount: Decimal | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class PendingRefundPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_key: str = Field(min_length=8, max_length=64)
+    shop_id: int = Field(gt=0, le=2_147_483_647)
+    order_id: int = Field(gt=0, le=2_147_483_647)
+    order_no: str = Field(max_length=64)
+    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    reason: str = Field(min_length=2, max_length=500)
+
+
+class RefundPreview(BaseModel):
+    order_id: int
+    order_no: str
+    order_status: str
+    paid_amount: Decimal
+    refunded_amount: Decimal
+    in_flight_amount: Decimal
+    refundable_amount: Decimal
+    proposed_amount: Decimal
+    reason: str
+    projected_order_status: str
+    eligible: bool
+    block_reason: str | None = None
+    plan_key: str | None = None
+
+
+class OrderDiagnosticItem(BaseModel):
+    order_id: int
+    order_no: str
+    status: str
+    fulfillment_status: str
+    exception_type: str | None = None
+    exception_note: str | None = None
+    paid_amount: Decimal
+    refunded_amount: Decimal
+    refundable_amount: Decimal
+    can_refund: bool
+    refund_block_reason: str | None = None
+    sku_codes: list[str] = Field(default_factory=list)
+
+
+class OrderQueryResult(BaseModel):
+    mode: Literal["detail", "exception_list"]
+    items: list[OrderDiagnosticItem]
+
+
 class AgentQuery(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
@@ -64,12 +126,16 @@ class AgentQuery(BaseModel):
 class QueryIntent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["sales", "promotion", "confirm_plan", "unsupported"]
+    kind: Literal["sales", "promotion", "order_query", "refund", "confirm_plan", "unsupported"]
     sku_code: str | None = Field(default=None, max_length=64)
     discount: Decimal | None = None
     duration_days: int | None = None
     start_date: str | None = Field(default=None, max_length=32)
     ambiguous_terms: bool = False
+    order_no: str | None = Field(default=None, max_length=64)
+    refund_amount: Decimal | None = None
+    refund_reason: str | None = Field(default=None, max_length=500)
+    exception_only: bool = False
 
 
 class AgentAnswer(BaseModel):
@@ -82,6 +148,11 @@ class AgentAnswer(BaseModel):
         "promotion_preview",
         "promotion_blocked",
         "promotion_submitted",
+        "order_info",
+        "refund_clarify",
+        "refund_preview",
+        "refund_blocked",
+        "refund_submitted",
     ]
     message: str
     session_id: int | None = None
@@ -92,3 +163,8 @@ class AgentAnswer(BaseModel):
     promotion_context: PromotionContext | None = None
     pending_plan: PendingPromotionPlan | None = None
     submission: PromotionSubmitResponse | None = None
+    order_result: OrderQueryResult | None = None
+    refund: RefundPreview | None = None
+    refund_context: RefundContext | None = None
+    pending_refund_plan: PendingRefundPlan | None = None
+    refund_submission: RefundSubmitResponse | None = None

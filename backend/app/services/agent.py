@@ -6,7 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.models.agent import AgentMessage, AgentSession, AgentTask, AgentToolCall
-from app.schemas.agent import AgentAnswer, PendingPromotionPlan, PromotionContext
+from app.schemas.agent import (
+    AgentAnswer,
+    PendingPromotionPlan,
+    PendingRefundPlan,
+    PromotionContext,
+    RefundContext,
+)
 
 
 @dataclass(frozen=True)
@@ -14,6 +20,8 @@ class LoadedSessionContext:
     session_id: int | None
     prior_promotion: PromotionContext | None
     pending_plan: PendingPromotionPlan | None = None
+    prior_refund: RefundContext | None = None
+    pending_refund_plan: PendingRefundPlan | None = None
     cross_shop: bool = False
 
 
@@ -25,7 +33,7 @@ async def load_session_context(
     session_id: int | None,
 ) -> LoadedSessionContext:
     if session_id is None:
-        return LoadedSessionContext(session_id=None, prior_promotion=None, pending_plan=None)
+        return LoadedSessionContext(session_id=None, prior_promotion=None)
 
     agent_session = await session.scalar(select(AgentSession).where(AgentSession.id == session_id))
     if agent_session is None:
@@ -46,21 +54,36 @@ async def load_session_context(
         return LoadedSessionContext(
             session_id=agent_session.id,
             prior_promotion=None,
-            pending_plan=None,
             cross_shop=True,
         )
 
     prior_promotion: PromotionContext | None = None
     pending_plan: PendingPromotionPlan | None = None
+    prior_refund: RefundContext | None = None
+    pending_refund_plan: PendingRefundPlan | None = None
     if agent_session.context_json:
         if "promotion_context" in agent_session.context_json:
-            prior_promotion = PromotionContext.model_validate(agent_session.context_json["promotion_context"])
+            prior_promotion = PromotionContext.model_validate(
+                agent_session.context_json["promotion_context"]
+            )
         if "pending_plan" in agent_session.context_json:
-            pending_plan = PendingPromotionPlan.model_validate(agent_session.context_json["pending_plan"])
+            pending_plan = PendingPromotionPlan.model_validate(
+                agent_session.context_json["pending_plan"]
+            )
+        if "refund_context" in agent_session.context_json:
+            prior_refund = RefundContext.model_validate(
+                agent_session.context_json["refund_context"]
+            )
+        if "pending_refund_plan" in agent_session.context_json:
+            pending_refund_plan = PendingRefundPlan.model_validate(
+                agent_session.context_json["pending_refund_plan"]
+            )
     return LoadedSessionContext(
         session_id=agent_session.id,
         prior_promotion=prior_promotion,
         pending_plan=pending_plan,
+        prior_refund=prior_refund,
+        pending_refund_plan=pending_refund_plan,
     )
 
 
@@ -97,6 +120,10 @@ async def record_turn(
         next_context["promotion_context"] = answer.promotion_context.model_dump(mode="json")
     if answer.pending_plan is not None:
         next_context["pending_plan"] = answer.pending_plan.model_dump(mode="json")
+    if answer.refund_context is not None:
+        next_context["refund_context"] = answer.refund_context.model_dump(mode="json")
+    if answer.pending_refund_plan is not None:
+        next_context["pending_refund_plan"] = answer.pending_refund_plan.model_dump(mode="json")
     agent_session.context_json = next_context or None
 
     session.add_all([
@@ -112,8 +139,14 @@ async def record_turn(
     plan_payload: dict[str, Any] | None = None
     if answer.submission is not None:
         plan_payload = answer.submission.model_dump(mode="json")
+    elif answer.refund_submission is not None:
+        plan_payload = answer.refund_submission.model_dump(mode="json")
     elif answer.promotion is not None:
         plan_payload = answer.promotion.model_dump(mode="json")
+    elif answer.refund is not None:
+        plan_payload = answer.refund.model_dump(mode="json")
+    elif answer.order_result is not None:
+        plan_payload = answer.order_result.model_dump(mode="json")
     elif answer.sales is not None:
         plan_payload = answer.sales.model_dump(mode="json")
 

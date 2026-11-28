@@ -42,6 +42,10 @@ async def test_agent_uses_only_the_selected_chat_channel(provider, monkeypatch):
         "duration_days": None,
         "start_date": None,
         "ambiguous_terms": False,
+        "order_no": None,
+        "refund_amount": None,
+        "refund_reason": None,
+        "exception_only": False,
     }
 
 

@@ -2,6 +2,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from time import perf_counter
 from typing import Any
 
@@ -9,12 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import DEFAULT_SHOP_TIMEZONE
 from app.core.errors import AppError
-from app.schemas.agent import AgentAnswer, PendingPromotionPlan, PromotionContext
+from app.schemas.agent import (
+    AgentAnswer,
+    PendingPromotionPlan,
+    PendingRefundPlan,
+    PromotionContext,
+)
 from app.schemas.orders import SkuSales
 from app.schemas.promotions import PromotionCreateRequest, PromotionSubmitResponse
+from app.schemas.refunds import RefundCreateRequest, RefundSubmitResponse
 from app.services.orders import sku_sales
 from app.services.promotion_preview import preview_promotion
 from app.services.promotions import submit_promotion
+from app.services.refund_preview import preview_refund, query_orders_for_agent
+from app.services.refunds import submit_refund
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +239,162 @@ async def submit_promotion_approval_tool(
             exc.message,
             ToolCallRecord(
                 tool_name="submit_promotion_approval",
+                request_json=request_payload,
+                response_summary={"code": exc.code},
+                status="failed",
+                error=exc.message,
+                duration_ms=elapsed_ms,
+            ),
+        )
+
+
+async def query_order_tool(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    shop_id: int,
+    order_no: str | None = None,
+    exception_only: bool = False,
+) -> tuple[AgentAnswer, ToolCallRecord]:
+    started = perf_counter()
+    request_payload = {
+        "shop_id": shop_id,
+        "order_no": order_no,
+        "exception_only": exception_only,
+    }
+    try:
+        async with session_factory() as session:
+            answer = await query_orders_for_agent(
+                session,
+                shop_id=shop_id,
+                order_no=order_no,
+                exception_only=exception_only,
+            )
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        summary: dict[str, Any] = {
+            "kind": answer.kind,
+            "mode": answer.order_result.mode if answer.order_result else None,
+            "count": len(answer.order_result.items) if answer.order_result else 0,
+        }
+        return answer, ToolCallRecord(
+            tool_name="query_order",
+            request_json=request_payload,
+            response_summary=summary,
+            status="succeeded",
+            duration_ms=elapsed_ms,
+        )
+    except Exception as exc:
+        logger.warning("Agent tool query_order failed: %s", type(exc).__name__)
+        raise
+
+
+async def preview_refund_tool(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    shop_id: int,
+    order_no: str,
+    amount: Decimal | None,
+    reason: str | None,
+) -> tuple[AgentAnswer, ToolCallRecord]:
+    started = perf_counter()
+    request_payload = {
+        "shop_id": shop_id,
+        "order_no": order_no,
+        "amount": str(amount) if amount is not None else None,
+        "has_reason": bool(reason),
+    }
+    try:
+        async with session_factory() as session:
+            answer = await preview_refund(
+                session,
+                shop_id=shop_id,
+                order_no=order_no,
+                amount=amount,
+                reason=reason,
+            )
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        summary: dict[str, Any] = {"kind": answer.kind, "order_no": order_no}
+        if answer.refund is not None:
+            summary.update(
+                {
+                    "eligible": answer.refund.eligible,
+                    "refundable_amount": str(answer.refund.refundable_amount),
+                    "proposed_amount": str(answer.refund.proposed_amount),
+                }
+            )
+        return answer, ToolCallRecord(
+            tool_name="preview_refund",
+            request_json=request_payload,
+            response_summary=summary,
+            status="succeeded",
+            duration_ms=elapsed_ms,
+        )
+    except Exception as exc:
+        logger.warning("Agent tool preview_refund failed: %s", type(exc).__name__)
+        raise
+
+
+async def submit_refund_approval_tool(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    organization_id: int,
+    shop_id: int,
+    shop_name: str,
+    actor_id: int,
+    business_day: date,
+    plan: PendingRefundPlan,
+    idempotency_key: str,
+) -> tuple[RefundSubmitResponse | None, str | None, ToolCallRecord]:
+    """
+    受控提交退款审批工具：只允许创建待审批退款单与审批单，绝不暴露审批通过或直接退款能力。
+    """
+    started = perf_counter()
+    request_payload = {
+        "shop_id": shop_id,
+        "order_id": plan.order_id,
+        "order_no": plan.order_no,
+        "amount": str(plan.amount),
+        "idempotency_key": idempotency_key,
+    }
+    try:
+        async with session_factory.begin() as session:
+            result = await submit_refund(
+                session,
+                organization_id=organization_id,
+                shop_id=shop_id,
+                shop_name=shop_name,
+                actor_id=actor_id,
+                business_day=business_day,
+                payload=RefundCreateRequest(
+                    order_id=plan.order_id,
+                    amount=plan.amount,
+                    reason=plan.reason,
+                ),
+                idempotency_key=idempotency_key,
+            )
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        return (
+            result,
+            None,
+            ToolCallRecord(
+                tool_name="submit_refund_approval",
+                request_json=request_payload,
+                response_summary={
+                    "refund_no": result.refund_no,
+                    "approval_no": result.approval_no,
+                    "status": result.status,
+                    "replayed": result.replayed,
+                },
+                status="succeeded",
+                duration_ms=elapsed_ms,
+            ),
+        )
+    except AppError as exc:
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        return (
+            None,
+            exc.message,
+            ToolCallRecord(
+                tool_name="submit_refund_approval",
                 request_json=request_payload,
                 response_summary={"code": exc.code},
                 status="failed",

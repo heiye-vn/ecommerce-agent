@@ -11,22 +11,29 @@ from app.agent.llm_gateway import classify_with_metadata
 from app.agent.tools import (
     ToolCallRecord,
     preview_promotion_tool,
+    preview_refund_tool,
+    query_order_tool,
     query_sales_tool,
     submit_promotion_approval_tool,
+    submit_refund_approval_tool,
 )
 from app.core.config import AppSettings
 from app.schemas.agent import (
+    ORDER_NO_PATTERN,
     SKU_PATTERN,
     AgentAnswer,
     PendingPromotionPlan,
+    PendingRefundPlan,
     PromotionContext,
     QueryIntent,
+    RefundContext,
 )
 from app.services.promotion_preview import (
     is_confirm_message,
     parse_terms,
     resolve_start_date_match,
 )
+from app.services.refund_preview import parse_refund_amount, parse_refund_reason
 
 # 保留模块级引用，兼容测试通过 monkeypatch.setattr(graph, "classify", ...) 注入意图桩
 classify = _gateway_classify
@@ -36,6 +43,8 @@ class QueryState(TypedDict, total=False):
     message: str
     prior_context: PromotionContext | None
     pending_plan: PendingPromotionPlan | None
+    prior_refund_context: RefundContext | None
+    pending_refund_plan: PendingRefundPlan | None
     intent: QueryIntent
     llm_provider: str | None
     model_name: str | None
@@ -57,11 +66,16 @@ class QueryContext(TypedDict):
 
 
 def route_entry(state: QueryState) -> str:
-    pending_plan = state.get("pending_plan")
-    if pending_plan is not None and is_confirm_message(state["message"]):
-        return "confirm_promotion"
-    prior = state.get("prior_context")
-    if prior is not None and not SKU_PATTERN.search(state["message"]):
+    pending_refund = state.get("pending_refund_plan")
+    pending_promo = state.get("pending_plan")
+    if (pending_refund is not None or pending_promo is not None) and is_confirm_message(state["message"]):
+        return "confirm_active_plan"
+    has_new_entity = bool(
+        SKU_PATTERN.search(state["message"]) or ORDER_NO_PATTERN.search(state["message"])
+    )
+    if state.get("prior_refund_context") is not None and not has_new_entity:
+        return "follow_up_refund"
+    if state.get("prior_context") is not None and not has_new_entity:
         return "follow_up_promotion"
     return "recognize"
 
@@ -127,7 +141,70 @@ async def _submit_pending_plan(
     }
 
 
-async def confirm_promotion(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, object]:
+async def _submit_pending_refund_plan(
+    plan: PendingRefundPlan,
+    ctx: QueryContext,
+) -> dict[str, object]:
+    if plan.shop_id != ctx["shop_id"]:
+        return {
+            "task_type": "refund_submit",
+            "tool_records": [],
+            "answer": AgentAnswer(
+                kind="unsupported",
+                message="该退款方案属于另一家店铺，请切回原店铺后再确认提交。",
+                tool_calls=0,
+            ),
+        }
+    session_prefix = f"agent-session-{ctx['session_id']}" if ctx["session_id"] is not None else "agent-refund"
+    idempotency_key = f"{session_prefix}-refund-{plan.plan_key}"
+    submission, error_msg, record = await submit_refund_approval_tool(
+        ctx["session_factory"],
+        organization_id=ctx["organization_id"],
+        shop_id=ctx["shop_id"],
+        shop_name=ctx["shop_name"],
+        actor_id=ctx["actor_id"],
+        business_day=ctx["business_day"],
+        plan=plan,
+        idempotency_key=idempotency_key,
+    )
+    if submission is None:
+        return {
+            "task_type": "refund_submit",
+            "tool_records": [record],
+            "answer": AgentAnswer(
+                kind="refund_blocked",
+                message=error_msg or "退款方案校验未通过，无法提交审批。",
+                tool_calls=1,
+                pending_refund_plan=plan,
+            ),
+        }
+    if submission.replayed:
+        msg = (
+            f"同一退款方案已提交审批，直接返回原审批单 {submission.approval_no}"
+            f"（退款单 {submission.refund_no}），未重复建单。"
+        )
+    else:
+        msg = (
+            f"已提交退款人工审批，审批单号 {submission.approval_no}"
+            f"（退款单 {submission.refund_no} · ¥{submission.amount:.2f}），等待本店其他审批员处理。"
+        )
+    return {
+        "task_type": "refund_submit",
+        "tool_records": [record],
+        "answer": AgentAnswer(
+            kind="refund_submitted",
+            message=msg,
+            tool_calls=1,
+            refund_submission=submission,
+            pending_refund_plan=plan,
+        ),
+    }
+
+
+async def confirm_active_plan(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, object]:
+    pending_refund = state.get("pending_refund_plan")
+    if pending_refund is not None:
+        return await _submit_pending_refund_plan(pending_refund, runtime.context)
     plan = state["pending_plan"]
     assert plan is not None
     return await _submit_pending_plan(plan, runtime.context)
@@ -163,6 +240,35 @@ async def follow_up_promotion(state: QueryState, runtime: Runtime[QueryContext])
     }
 
 
+async def follow_up_refund(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, object]:
+    prior = state["prior_refund_context"]
+    assert prior is not None
+    ctx = runtime.context
+    amount = parse_refund_amount(
+        state["message"],
+        amount_hint=prior.amount,
+        allow_bare_number=(prior.amount is None),
+    )
+    reason = parse_refund_reason(
+        state["message"],
+        reason_hint=prior.reason,
+        allow_free_text=(prior.reason is None and amount is not None),
+    )
+    answer, record = await preview_refund_tool(
+        ctx["session_factory"],
+        shop_id=ctx["shop_id"],
+        order_no=prior.order_no,
+        amount=amount,
+        reason=reason,
+    )
+    answer.tool_calls = 1
+    return {
+        "task_type": "refund_preview",
+        "tool_records": [record],
+        "answer": answer,
+    }
+
+
 async def recognize(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, object]:
     if classify is not _gateway_classify:
         intent = await classify(state["message"])
@@ -175,21 +281,111 @@ async def recognize(state: QueryState, runtime: Runtime[QueryContext]) -> dict[s
     }
 
 
+async def _handle_confirm_plan(state: QueryState, ctx: QueryContext) -> dict[str, object]:
+    pending_refund = state.get("pending_refund_plan")
+    if pending_refund is not None:
+        return await _submit_pending_refund_plan(pending_refund, ctx)
+    pending_plan = state.get("pending_plan")
+    if pending_plan is not None:
+        return await _submit_pending_plan(pending_plan, ctx)
+    return {
+        "task_type": "plan_submit",
+        "tool_records": [],
+        "answer": AgentAnswer(
+            kind="clarify",
+            message="当前会话还没有待确认的完整方案，请先生成促销或退款预览并补齐必要参数。",
+        ),
+    }
+
+
+async def _handle_order_query(
+    message: str,
+    intent: QueryIntent,
+    ctx: QueryContext,
+) -> dict[str, object]:
+    order_nos = {m.group().upper() for m in ORDER_NO_PATTERN.finditer(message)}
+    if len(order_nos) > 1:
+        return {
+            "task_type": "order_query",
+            "tool_records": [],
+            "answer": AgentAnswer(
+                kind="clarify",
+                message="一次仅支持查询单笔订单，请指定一个明确的订单编号，例如：查看订单 ORD-20261111-01。",
+            ),
+        }
+    target_order_no: str | None = None
+    if len(order_nos) == 1:
+        mentioned = next(iter(order_nos))
+        if intent.order_no and intent.order_no.upper() != mentioned:
+            return {
+                "task_type": "order_query",
+                "tool_records": [],
+                "answer": AgentAnswer(
+                    kind="clarify",
+                    message="请确认需要查询的单个订单编号，例如：查看订单 ORD-20261111-01。",
+                ),
+            }
+        target_order_no = mentioned
+    exception_only = intent.exception_only or ("异常" in message or "复核" in message)
+    answer, record = await query_order_tool(
+        ctx["session_factory"],
+        shop_id=ctx["shop_id"],
+        order_no=target_order_no,
+        exception_only=exception_only,
+    )
+    answer.tool_calls = 1
+    return {
+        "task_type": "order_query",
+        "tool_records": [record],
+        "answer": answer,
+    }
+
+
+async def _handle_refund(
+    message: str,
+    intent: QueryIntent,
+    ctx: QueryContext,
+) -> dict[str, object]:
+    order_nos = {m.group().upper() for m in ORDER_NO_PATTERN.finditer(message)}
+    code = intent.order_no
+    if not code or len(order_nos) != 1 or code.upper() not in order_nos:
+        return {
+            "task_type": "refund_preview",
+            "tool_records": [],
+            "answer": AgentAnswer(
+                kind="clarify",
+                message="请提供一条明确的订单编号发起退款，例如：给 ORD-20261111-01 退 50 元，原因部分商品售后。",
+            ),
+        }
+    order_no = code.upper()
+    amount = parse_refund_amount(message, amount_hint=intent.refund_amount)
+    reason = parse_refund_reason(message, reason_hint=intent.refund_reason)
+    answer, record = await preview_refund_tool(
+        ctx["session_factory"],
+        shop_id=ctx["shop_id"],
+        order_no=order_no,
+        amount=amount,
+        reason=reason,
+    )
+    answer.tool_calls = 1
+    return {
+        "task_type": "refund_preview",
+        "tool_records": [record],
+        "answer": answer,
+    }
+
+
 async def respond(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, object]:
     intent = state["intent"]
     ctx = runtime.context
     if intent.kind == "confirm_plan":
-        pending_plan = state.get("pending_plan")
-        if pending_plan is None:
-            return {
-                "task_type": "promotion_submit",
-                "tool_records": [],
-                "answer": AgentAnswer(
-                    kind="clarify",
-                    message="当前会话还没有待确认的完整促销方案，请先生成促销预览并补充开始日期。",
-                ),
-            }
-        return await _submit_pending_plan(pending_plan, ctx)
+        return await _handle_confirm_plan(state, ctx)
+
+    if intent.kind == "order_query":
+        return await _handle_order_query(state["message"], intent, ctx)
+
+    if intent.kind == "refund":
+        return await _handle_refund(state["message"], intent, ctx)
 
     if intent.kind == "unsupported":
         return {
@@ -198,8 +394,8 @@ async def respond(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str
             "answer": AgentAnswer(
                 kind="unsupported",
                 message=(
-                    "当前仅支持本店单个 SKU 最近 7 天销量查询、促销方案预览及确认提交审批"
-                    "（审批裁决需由审批员在审批中心完成）。"
+                    "当前支持本店单 SKU 近 7 天销量查询、促销预览与送审、订单/异常订单诊断，以及退款预览与送审"
+                    "（审批裁决需由审批员完成，库存操作请在商品运营页执行）。"
                 ),
             ),
         }
@@ -296,21 +492,24 @@ async def respond(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str
 
 
 builder = StateGraph(QueryState, context_schema=QueryContext)
-builder.add_node("confirm_promotion", confirm_promotion)
+builder.add_node("confirm_active_plan", confirm_active_plan)
 builder.add_node("follow_up_promotion", follow_up_promotion)
+builder.add_node("follow_up_refund", follow_up_refund)
 builder.add_node("recognize", recognize)
 builder.add_node("respond", respond)
 builder.add_conditional_edges(
     START,
     route_entry,
     {
-        "confirm_promotion": "confirm_promotion",
+        "confirm_active_plan": "confirm_active_plan",
         "follow_up_promotion": "follow_up_promotion",
+        "follow_up_refund": "follow_up_refund",
         "recognize": "recognize",
     },
 )
-builder.add_edge("confirm_promotion", END)
+builder.add_edge("confirm_active_plan", END)
 builder.add_edge("follow_up_promotion", END)
+builder.add_edge("follow_up_refund", END)
 builder.add_edge("recognize", "respond")
 builder.add_edge("respond", END)
 query_graph = builder.compile()
