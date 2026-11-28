@@ -145,7 +145,7 @@ function AuthRoutes() {
         <Route
           path="/catalog"
           element={shop && shopRead
-            ? <CatalogPage key={shop.id} {...shopRead} />
+            ? <CatalogPage key={shop.id} shopRoles={shop.roles} {...shopRead} />
             : null}
         />
         <Route
@@ -162,11 +162,21 @@ function AuthRoutes() {
         />
         <Route
           path="/orders"
-          element={shop && shopRead ? <OrdersPage {...shopRead} /> : null}
+          element={shop && shopRead
+            ? <OrdersPage shopName={shop.name} shopRoles={shop.roles} userId={session?.user.id ?? 0} {...shopRead} />
+            : null}
+        />
+        <Route
+          path="/orders/refunds/:refundId"
+          element={shop && shopRead
+            ? <OrdersPage shopName={shop.name} shopRoles={shop.roles} userId={session?.user.id ?? 0} {...shopRead} />
+            : null}
         />
         <Route
           path="/orders/:orderId"
-          element={shop && shopRead ? <OrdersPage {...shopRead} /> : null}
+          element={shop && shopRead
+            ? <OrdersPage shopName={shop.name} shopRoles={shop.roles} userId={session?.user.id ?? 0} {...shopRead} />
+            : null}
         />
         <Route
           path="/approvals"

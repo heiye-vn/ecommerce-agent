@@ -32,6 +32,7 @@ const statusLabels: Record<ApprovalStatus, string> = {
 
 const actionLabels: Record<string, string> = {
   promotion_publish: "促销发布",
+  refund_create: "订单退款",
   refund_execute: "订单退款",
   price_change: "商品调价",
 }
@@ -263,17 +264,19 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
           : await rejectApprovalRequest(props, detail.id, comment.trim())
       await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "approvals"] })
       await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "promotions"] })
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "refunds"] })
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "orders"] })
       await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "jobs"] })
       if (response.execution_status === "queued") {
         setResultBanner({
           type: "success",
-          text: response.execution_message || "审批已通过，排期任务已入队。",
+          text: response.execution_message || "审批已通过，后台执行任务已入队。",
           jobId: response.job_id,
         })
-        message?.success?.("审批已通过，排期任务已入队")
-      } else if (response.execution_status === "scheduled") {
+        message?.success?.("审批已通过，后台执行任务已入队")
+      } else if (response.execution_status === "scheduled" || response.execution_status === "succeeded") {
         setResultBanner({ type: "success", text: response.execution_message, jobId: response.job_id })
-        message?.success?.("审批通过，业务复核并排期成功")
+        message?.success?.("审批通过，业务复核并执行成功")
       } else if (response.execution_status === "failed") {
         setResultBanner({ type: "warning", text: response.execution_message, jobId: response.job_id })
         message?.warning?.("审批已通过，但实时业务复核未通过")
@@ -291,22 +294,28 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
     }
   }
 
+  const isRefund = detail?.resource_type === "refund"
   const snap = detail?.payload_snapshot ?? {}
   const startsAt = typeof snap.starts_at === "string" ? snap.starts_at : ""
   const endsAt = typeof snap.ends_at === "string" ? snap.ends_at : ""
   const riskWarnings = Array.isArray(snap.risk_warnings) ? (snap.risk_warnings as string[]) : []
   const sales7d = (snap.sales_7d ?? null) as { units_sold?: number; start_date?: string; end_date?: string } | null
+  const resourceLink = detail
+    ? isRefund
+      ? { to: `/orders/refunds/${detail.resource_id}`, label: "查看退款详情" }
+      : { to: `/promotions/${detail.resource_id}`, label: "查看活动详情" }
+    : null
 
   return (
     <main className={styles.page}>
       <nav className={styles.breadcrumb} aria-label="面包屑">
         <Link to="/">运营工作台</Link><span aria-hidden="true">/</span>
         <Link to="/approvals">审批中心</Link><span aria-hidden="true">/</span>
-        <strong aria-current="page">审阅促销方案</strong>
+        <strong aria-current="page">{isRefund ? "审阅退款申请" : "审阅促销方案"}</strong>
       </nav>
       <div className={styles.headerBar}>
         <div>
-          <h1>审阅促销方案</h1>
+          <h1>{isRefund ? "审阅退款申请" : "审阅促销方案"}</h1>
           <p className={styles.summary}>
             {detail ? `${detail.approval_no} · ${detail.resource_name} · ${detail.resource_no}` : "核对不可变审批参数快照与业务依据。"}
           </p>
@@ -331,56 +340,87 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
           <div className={styles.stack}>
             <section className={styles.card} aria-labelledby="snapshot-heading">
               <div className={styles.cardHeader}>
-                <h2 id="snapshot-heading">审批参数快照</h2>
+                <h2 id="snapshot-heading">{isRefund ? "退款参数快照" : "审批参数快照"}</h2>
                 <span className={styles.pill}>不可变快照</span>
               </div>
 
-              <div className={styles.snapshotBand}>
-                <div>
-                  <span>申请活动价</span>
-                  <div className={styles.priceRow}>
-                    <strong>¥{String(snap.promotion_price ?? detail.snapshot_amount ?? "—")}</strong>
-                    {snap.original_price ? <span className={styles.strikePrice}>¥{String(snap.original_price)}</span> : null}
-                    {snap.discount ? <span className={styles.discountTag}>{String(snap.discount)} 折</span> : null}
+              {isRefund ? (
+                <>
+                  <div className={styles.snapshotBand}>
+                    <div>
+                      <span>申请退款金额</span>
+                      <div className={styles.priceRow}>
+                        <strong>¥{String(snap.amount ?? detail.snapshot_amount ?? "—")}</strong>
+                        <span className={styles.discountTag}>本地沙箱模拟</span>
+                      </div>
+                    </div>
+                    <div>
+                      <span>关联订单与实付金额</span>
+                      <p className={styles.windowValue}>{String(snap.order_no ?? "—")}</p>
+                      <p className={styles.windowNote}>
+                        订单实付 ¥{String(snap.order_paid_amount ?? "—")} · 当时已成功退款 ¥{String(snap.refunded_amount ?? "0.00")}
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <span>活动时段 · {String(snap.timezone ?? "Asia/Shanghai")}</span>
-                  <p className={styles.windowValue}>
-                    {startsAt && endsAt
-                      ? `${startsAt.slice(5, 16).replace("T", " ")} → ${endsAt.slice(5, 16).replace("T", " ")}`
-                      : "—"}
-                  </p>
-                  <p className={styles.windowNote}>共 {String(snap.duration_days ?? "—")} 个完整自然日（含开始、不含结束）</p>
-                </div>
-              </div>
+                  <dl className={styles.specGrid}>
+                    <div><dt>退款单号</dt><dd>{detail.resource_no}</dd></div>
+                    <div><dt>关联订单</dt><dd>{String(snap.order_no ?? "—")}</dd></div>
+                    <div><dt>退款原因</dt><dd>{String(snap.reason ?? "—")}</dd></div>
+                    <div><dt>店铺</dt><dd>{detail.shop_name}</dd></div>
+                    <div><dt>申请人</dt><dd>{detail.requester_name}</dd></div>
+                    <div><dt>提交时间</dt><dd>{dateTime.format(new Date(detail.created_at))}</dd></div>
+                  </dl>
+                </>
+              ) : (
+                <>
+                  <div className={styles.snapshotBand}>
+                    <div>
+                      <span>申请活动价</span>
+                      <div className={styles.priceRow}>
+                        <strong>¥{String(snap.promotion_price ?? detail.snapshot_amount ?? "—")}</strong>
+                        {snap.original_price ? <span className={styles.strikePrice}>¥{String(snap.original_price)}</span> : null}
+                        {snap.discount ? <span className={styles.discountTag}>{String(snap.discount)} 折</span> : null}
+                      </div>
+                    </div>
+                    <div>
+                      <span>活动时段 · {String(snap.timezone ?? "Asia/Shanghai")}</span>
+                      <p className={styles.windowValue}>
+                        {startsAt && endsAt
+                          ? `${startsAt.slice(5, 16).replace("T", " ")} → ${endsAt.slice(5, 16).replace("T", " ")}`
+                          : "—"}
+                      </p>
+                      <p className={styles.windowNote}>共 {String(snap.duration_days ?? "—")} 个完整自然日（含开始、不含结束）</p>
+                    </div>
+                  </div>
 
-              {riskWarnings.length > 0 && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  style={{ marginBottom: 16 }}
-                  message="毛利与价格风险预警"
-                  description={riskWarnings.join(" ")}
-                />
+                  {riskWarnings.length > 0 && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      message="毛利与价格风险预警"
+                      description={riskWarnings.join(" ")}
+                    />
+                  )}
+
+                  <dl className={styles.specGrid}>
+                    <div><dt>适用 SKU</dt><dd>{String(snap.sku_code ?? detail.sku_code ?? "—")} · {String(snap.product_name ?? "")}</dd></div>
+                    <div><dt>活动版本</dt><dd>V{detail.resource_version}</dd></div>
+                    <div><dt>店铺</dt><dd>{detail.shop_name}</dd></div>
+                    <div><dt>库存门槛</dt><dd>可售库存 ≥ {String(snap.minimum_qty ?? 100)} 件</dd></div>
+                    <div><dt>申请人</dt><dd>{detail.requester_name}</dd></div>
+                    <div><dt>提交时间</dt><dd>{dateTime.format(new Date(detail.created_at))}</dd></div>
+                  </dl>
+                </>
               )}
-
-              <dl className={styles.specGrid}>
-                <div><dt>适用 SKU</dt><dd>{String(snap.sku_code ?? detail.sku_code ?? "—")} · {String(snap.product_name ?? "")}</dd></div>
-                <div><dt>活动版本</dt><dd>V{detail.resource_version}</dd></div>
-                <div><dt>店铺</dt><dd>{detail.shop_name}</dd></div>
-                <div><dt>库存门槛</dt><dd>可售库存 ≥ {String(snap.minimum_qty ?? 100)} 件</dd></div>
-                <div><dt>申请人</dt><dd>{detail.requester_name}</dd></div>
-                <div><dt>提交时间</dt><dd>{dateTime.format(new Date(detail.created_at))}</dd></div>
-              </dl>
             </section>
 
             <section className={styles.card} aria-labelledby="decision-heading">
               <div className={styles.cardHeader}>
                 <h2 id="decision-heading">审批意见</h2>
-                {detail.resource_id && (
-                  <Link className={styles.outlineLinkBtn} to={`/promotions/${detail.resource_id}`}>
-                    查看活动详情
+                {resourceLink && (
+                  <Link className={styles.outlineLinkBtn} to={resourceLink.to}>
+                    {resourceLink.label}
                   </Link>
                 )}
               </div>
@@ -395,7 +435,13 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
                 />
               )}
               {detail.resource_failure_reason && !resultBanner && (
-                <Alert type="warning" showIcon message="排期复核结果" description={detail.resource_failure_reason} style={{ marginBottom: 12 }} />
+                <Alert
+                  type="warning"
+                  showIcon
+                  message={isRefund ? "退款执行复核结果" : "排期复核结果"}
+                  description={detail.resource_failure_reason}
+                  style={{ marginBottom: 12 }}
+                />
               )}
 
               {detail.status === "pending" ? (
@@ -416,14 +462,14 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
                       loading={submitting === "approve"}
                       onClick={() => { void handleDecision("approve") }}
                     >
-                      批准此版本
+                      {isRefund ? "批准退款申请" : "批准此版本"}
                     </Button>
                     <Button
                       disabled={!detail.can_decide || submitting !== null}
                       loading={submitting === "reject"}
                       onClick={() => { void handleDecision("reject") }}
                     >
-                      驳回并返回
+                      {isRefund ? "驳回并退回" : "驳回并返回"}
                     </Button>
                   </div>
                 </>
@@ -441,27 +487,36 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
           <aside className={styles.stack}>
             <section className={styles.card} aria-labelledby="evidence-heading">
               <div className={styles.cardHeader}>
-                <h2 id="evidence-heading">数据依据</h2>
+                <h2 id="evidence-heading">{isRefund ? "资格与余额依据" : "数据依据"}</h2>
                 <span className={`${styles.pill} ${styles.pillMint}`}>数据库事实</span>
               </div>
-              <dl className={styles.factList}>
-                <div>
-                  <dt>近 7 天销量</dt>
-                  <dd>
-                    {sales7d
-                      ? `${sales7d.units_sold ?? 0} 件（${sales7d.start_date} 至 ${sales7d.end_date}）`
-                      : "未记录"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>库存快照（提交时）</dt>
-                  <dd>可售 {String(snap.available_qty_snapshot ?? "—")} 件</dd>
-                </div>
-                <div>
-                  <dt>售价与成本（提交时）</dt>
-                  <dd>售价 ¥{String(snap.original_price ?? "—")} · 成本 ¥{String(snap.cost_price ?? "—")}</dd>
-                </div>
-              </dl>
+              {isRefund ? (
+                <dl className={styles.factList}>
+                  <div><dt>订单实付金额</dt><dd>¥{String(snap.order_paid_amount ?? "—")}</dd></div>
+                  <div><dt>提交时已成功退款</dt><dd>¥{String(snap.refunded_amount ?? "0.00")}</dd></div>
+                  <div><dt>提交时可退上限</dt><dd>¥{String(snap.refundable_amount ?? "—")}</dd></div>
+                  <div><dt>当前退款单状态</dt><dd>{detail.resource_status ?? "—"}</dd></div>
+                </dl>
+              ) : (
+                <dl className={styles.factList}>
+                  <div>
+                    <dt>近 7 天销量</dt>
+                    <dd>
+                      {sales7d
+                        ? `${sales7d.units_sold ?? 0} 件（${sales7d.start_date} 至 ${sales7d.end_date}）`
+                        : "未记录"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>库存快照（提交时）</dt>
+                    <dd>可售 {String(snap.available_qty_snapshot ?? "—")} 件</dd>
+                  </div>
+                  <div>
+                    <dt>售价与成本（提交时）</dt>
+                    <dd>售价 ¥{String(snap.original_price ?? "—")} · 成本 ¥{String(snap.cost_price ?? "—")}</dd>
+                  </div>
+                </dl>
+              )}
             </section>
 
             <section className={styles.card} aria-labelledby="boundary-heading">
@@ -480,7 +535,9 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
                 </div>
               )}
               <div className={styles.boundaryNote}>
-                批准仅授权当前版本（V{detail.resource_version}），后端在排期前会锁定目标 SKU 并重新复核最新售价、可售库存、商品状态与时段冲突。
+                {isRefund
+                  ? "批准并不等于资金已退回。后台任务在沙箱执行前会锁定订单行，重新复核支付状态、剩余可退余额与重复退款防护。"
+                  : `批准仅授权当前版本（V${detail.resource_version}），后端在排期前会锁定目标 SKU 并重新复核最新售价、可售库存、商品状态与时段冲突。`}
               </div>
             </section>
           </aside>

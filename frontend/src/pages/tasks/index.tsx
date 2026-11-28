@@ -36,6 +36,7 @@ const typeLabels: Record<JobType, string> = {
   promotion_schedule: "促销排期",
   promotion_activate: "到点生效",
   promotion_complete: "到期结束",
+  refund_execute: "退款执行",
 }
 
 const auditActionLabels: Record<string, string> = {
@@ -49,6 +50,10 @@ const auditActionLabels: Record<string, string> = {
   "promotion.activated": "到点自动生效",
   "promotion.completed": "到期自动结束",
   "promotion.missed_window": "错过生效时段已结束",
+  "refund.submitted": "已提交退款审批",
+  "refund.cancelled": "已撤回退款申请",
+  "refund.succeeded": "沙箱退款执行成功",
+  "refund.execution_failed": "退款实时复核失败",
   "job.dead_lettered": "重试超限转入死信队列",
   "job.manual_retry": "人工按原操作重新投递",
 }
@@ -289,6 +294,13 @@ function TaskDetailView({ jobId, ...props }: PageProps & { jobId: string }) {
     }
   }
 
+  const isRefundJob = detail?.resource_type === "refund"
+  const resourcePath = detail
+    ? isRefundJob
+      ? `/orders/refunds/${detail.resource_id}`
+      : `/promotions/${detail.resource_id}`
+    : "/tasks"
+
   return (
     <main className={styles.page}>
       <nav className={styles.breadcrumb} aria-label="面包屑">
@@ -298,7 +310,11 @@ function TaskDetailView({ jobId, ...props }: PageProps & { jobId: string }) {
       </nav>
       <div className={styles.headerBar}>
         <div>
-          <h1>{detail?.status === "dead_lettered" || detail?.status === "failed" ? "促销执行异常" : "促销执行任务"}</h1>
+          <h1>
+            {detail?.status === "dead_lettered" || detail?.status === "failed"
+              ? isRefundJob ? "退款执行异常" : "促销执行异常"
+              : isRefundJob ? "退款执行任务" : "促销执行任务"}
+          </h1>
           <p className={styles.summary}>
             {detail
               ? `${detail.job_no} · ${detail.resource_name || detail.resource_no} · ${detail.resource_no} · V${detail.resource_version}`
@@ -375,9 +391,9 @@ function TaskDetailView({ jobId, ...props }: PageProps & { jobId: string }) {
                 </div>
                 <dl className={styles.specList}>
                   <div>
-                    <dt>关联活动</dt>
+                    <dt>{isRefundJob ? "关联退款单" : "关联活动"}</dt>
                     <dd>
-                      <Link className={styles.actionLink} to={`/promotions/${detail.resource_id}`}>
+                      <Link className={styles.actionLink} to={resourcePath}>
                         {detail.resource_no}
                       </Link>
                     </dd>
@@ -395,8 +411,8 @@ function TaskDetailView({ jobId, ...props }: PageProps & { jobId: string }) {
                       按原操作重试
                     </Button>
                   )}
-                  <Link className={styles.outlineLinkBtn} to={`/promotions/${detail.resource_id}`}>
-                    查看促销活动详情
+                  <Link className={styles.outlineLinkBtn} to={resourcePath}>
+                    {isRefundJob ? "查看退款详情" : "查看促销活动详情"}
                   </Link>
                 </div>
               </section>

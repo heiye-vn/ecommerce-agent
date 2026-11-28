@@ -33,13 +33,17 @@
   line-height: 1.5;
 }
 
-.pageActions, .examples {
+.examples {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .pageActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   justify-content: space-between;
   margin-bottom: 22px;
 }
@@ -408,4 +412,39 @@
 .inlineLink:hover {
   border-color: #000;
   color: #000;
+}
+
+.diagList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.diagItem {
+  padding: 10px 12px;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  background: #fbfbf5;
+}
+
+.diagTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.diagTop span {
+  color: #52525b;
+  font-size: 13px;
+}
+
+.diagItem p {
+  margin: 4px 0 0;
+  color: #52525b;
+  font-size: 13px;
+  line-height: 1.45;
 }

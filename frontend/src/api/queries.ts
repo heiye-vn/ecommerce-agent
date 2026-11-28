@@ -13,11 +13,26 @@ export type CatalogSku = {
   reserved_qty: number | null
 }
 
+export type OrderRefundBrief = {
+  id: number
+  refund_no: string
+  amount: string
+  reason: string
+  status: string
+  failure_reason?: string | null
+  created_at: string
+}
+
 export type OrderSummary = {
   id: number
   order_no: string
   status: string
+  fulfillment_status?: string
+  exception_type?: string | null
+  exception_note?: string | null
   paid_amount: string
+  refunded_amount?: string
+  in_flight_refund_amount?: string
   paid_at: string | null
   created_at: string
   sku_codes: string[]
@@ -33,7 +48,123 @@ export type OrderLine = {
   paid_amount: string
 }
 
-export type OrderDetail = OrderSummary & { items: OrderLine[] }
+export type OrderDetail = OrderSummary & {
+  items: OrderLine[]
+  refundable_amount?: string
+  can_refund?: boolean
+  refund_block_reason?: string | null
+  refunds?: OrderRefundBrief[]
+}
+
+export type RefundStatus =
+  | "pending_approval"
+  | "approved"
+  | "processing"
+  | "succeeded"
+  | "rejected"
+  | "cancelled"
+  | "failed"
+
+export type RefundSummary = {
+  id: number
+  refund_no: string
+  order_id: number
+  order_no: string
+  order_status: string
+  order_paid_amount: string
+  amount: string
+  reason: string
+  status: RefundStatus
+  requester_id: number
+  requester_name: string
+  failure_reason: string | null
+  processed_at: string | null
+  approval_id: number | null
+  approval_no: string | null
+  approval_status: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type RefundDetail = RefundSummary & {
+  refunded_amount: string
+  refundable_amount: string
+  job_id: number | null
+  job_no: string | null
+  job_status: string | null
+  audit_logs: AuditLogEntry[]
+}
+
+export type RefundSubmitResponse = {
+  refund_id: number
+  refund_no: string
+  order_id: number
+  order_no: string
+  amount: string
+  status: RefundStatus
+  approval_id: number
+  approval_no: string
+  approval_status: string
+  replayed: boolean
+  message: string
+}
+
+export type InventoryMovementType =
+  | "opening_balance"
+  | "reserve"
+  | "release"
+  | "fulfill"
+  | "restock"
+  | "adjust"
+
+export type InventoryMutationType = "reserve" | "release" | "fulfill" | "restock"
+
+export type InventorySnapshot = {
+  sku_id: number
+  sku_code: string
+  product_name: string
+  category: string
+  status: string
+  available_qty: number | null
+  reserved_qty: number | null
+  total_qty: number | null
+  version: number | null
+  low_stock: boolean
+  low_stock_threshold: number
+}
+
+export type InventoryOverviewResponse = {
+  low_stock_threshold: number
+  low_stock_count: number
+  items: InventorySnapshot[]
+}
+
+export type InventoryMovementItem = {
+  id: number
+  sku_id: number
+  sku_code: string
+  product_name: string
+  movement_type: InventoryMovementType
+  quantity: number
+  available_delta: number
+  reserved_delta: number
+  before_available: number | null
+  after_available: number | null
+  before_reserved: number | null
+  after_reserved: number | null
+  reference_id: string
+  note: string | null
+  actor_id: number | null
+  actor_name: string | null
+  created_at: string
+}
+
+export type InventoryMovementMutationResponse = {
+  snapshot: InventorySnapshot
+  movement: InventoryMovementItem
+  replayed: boolean
+  message: string
+}
 
 export type PromotionStatus =
   | "pending_approval"
@@ -181,7 +312,7 @@ export type ApprovalDecisionResponse = {
 }
 
 export type JobStatus = "pending" | "running" | "succeeded" | "retrying" | "failed" | "dead_lettered"
-export type JobType = "promotion_schedule" | "promotion_activate" | "promotion_complete"
+export type JobType = "promotion_schedule" | "promotion_activate" | "promotion_complete" | "refund_execute"
 export type JobTab = "all" | "needs_attention" | "completed"
 
 export type JobSummary = {
@@ -219,7 +350,7 @@ export type JobRetryResponse = {
   message: string
 }
 
-export type NotificationCategory = "approval" | "promotion" | "job"
+export type NotificationCategory = "approval" | "promotion" | "job" | "refund"
 
 export type NotificationItem = {
   id: number
@@ -261,6 +392,50 @@ export function useCatalogQuery(auth: ShopReadProps) {
   })
 }
 
+export function useInventoryOverviewQuery(auth: ShopReadProps, enabled: boolean) {
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "inventory"],
+    queryFn: ({ signal }) => fetchShopJson<InventoryOverviewResponse>("inventory", auth, { signal }),
+    enabled,
+  })
+}
+
+export function useInventoryMovementsQuery(
+  auth: ShopReadProps,
+  skuCode: string,
+  movementType: string,
+  enabled: boolean,
+) {
+  const params = new URLSearchParams()
+  if (skuCode) params.set("sku_code", skuCode)
+  if (movementType) params.set("movement_type", movementType)
+  const suffix = params.toString() ? `inventory/movements?${params.toString()}` : "inventory/movements"
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "inventory", "movements", skuCode, movementType],
+    queryFn: ({ signal }) => fetchShopJson<InventoryMovementItem[]>(suffix, auth, { signal }),
+    enabled,
+  })
+}
+
+export function applyInventoryMovementRequest(
+  auth: ShopReadProps,
+  skuCode: string,
+  payload: {
+    movement_type: InventoryMutationType
+    quantity: number
+    reference_id: string
+    expected_version?: number
+    note?: string
+  },
+  idempotencyKey?: string,
+) {
+  return fetchShopJson<InventoryMovementMutationResponse>(
+    `inventory/${encodeURIComponent(skuCode)}/movements`,
+    auth,
+    { payload, idempotencyKey },
+  )
+}
+
 export function useOrdersQuery(auth: ShopReadProps) {
   return useQuery({
     queryKey: ["shop", auth.shopId, "orders"],
@@ -274,6 +449,35 @@ export function useOrderDetailQuery(auth: ShopReadProps, orderId: string, enable
     queryFn: ({ signal }) => fetchShopJson<OrderDetail>(`orders/${orderId}`, auth, { signal }),
     enabled,
   })
+}
+
+export function useRefundsQuery(auth: ShopReadProps, enabled: boolean, status = "") {
+  const path = status ? `refunds?status=${encodeURIComponent(status)}` : "refunds"
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "refunds", status],
+    queryFn: ({ signal }) => fetchShopJson<RefundSummary[]>(path, auth, { signal }),
+    enabled,
+  })
+}
+
+export function useRefundDetailQuery(auth: ShopReadProps, refundId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "refunds", "detail", refundId],
+    queryFn: ({ signal }) => fetchShopJson<RefundDetail>(`refunds/${refundId}`, auth, { signal }),
+    enabled,
+  })
+}
+
+export function submitRefundRequest(
+  auth: ShopReadProps,
+  payload: { order_id: number; amount: string; reason: string },
+  idempotencyKey?: string,
+) {
+  return fetchShopJson<RefundSubmitResponse>("refunds", auth, { payload, idempotencyKey })
+}
+
+export function cancelRefundRequest(auth: ShopReadProps, refundId: number) {
+  return fetchShopJson<RefundDetail>(`refunds/${refundId}/cancel`, auth, { payload: {} })
 }
 
 export function usePromotionsQuery(auth: ShopReadProps) {

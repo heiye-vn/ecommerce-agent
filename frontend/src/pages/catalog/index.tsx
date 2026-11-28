@@ -1,18 +1,56 @@
 import { InboxOutlined, SearchOutlined } from "@ant-design/icons"
-import { Alert, Button, Input, Select, Spin, Table } from "antd"
+import { useQueryClient } from "@tanstack/react-query"
+import { Alert, App as AntApp, Button, Form, Input, InputNumber, Modal, Select, Spin, Table } from "antd"
 import type { TableColumnsType } from "antd"
 import { useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 
 import { ApiError } from "../../api/client"
-import { useCatalogQuery, type CatalogSku } from "../../api/queries"
+import {
+  applyInventoryMovementRequest,
+  useCatalogQuery,
+  useInventoryMovementsQuery,
+  useInventoryOverviewQuery,
+  type CatalogSku,
+  type InventoryMovementItem,
+  type InventoryMovementType,
+  type InventoryMutationType,
+} from "../../api/queries"
 import type { ShopReadProps } from "../../auth"
 import styles from "./index.module.css"
+
+type CatalogPageProps = ShopReadProps & {
+  shopRoles?: string[]
+}
 
 const pageSize = 6
 const statusLabels = { active: "在售", inactive: "已下架", other: "其他状态" }
 const inventoryLabels = { available: "有库存", empty: "缺货", missing: "未记录" }
+const movementLabels: Record<InventoryMovementType, string> = {
+  opening_balance: "期初建账",
+  reserve: "预占",
+  release: "释放",
+  fulfill: "履约扣减",
+  restock: "入库",
+  adjust: "调整",
+}
+const movementToneMap: Record<InventoryMovementType, string> = {
+  opening_balance: "pill",
+  reserve: "pillPending",
+  release: "activePill",
+  fulfill: "pill",
+  restock: "inventoryPill",
+  adjust: "pill",
+}
+
 const yuan = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const dateTime = new Intl.DateTimeFormat("sv-SE", {
+  timeZone: "Asia/Shanghai",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+})
 
 function inventoryStatus(quantity: number | null) {
   return quantity === null ? "missing" : quantity === 0 ? "empty" : "available"
@@ -24,6 +62,11 @@ function productStatus(status: string) {
 
 function quantityCell(quantity: number | null) {
   return quantity === null ? <span aria-label="未记录">—</span> : `${quantity} 件`
+}
+
+function signedDelta(delta: number) {
+  if (delta > 0) return `+${delta}`
+  return String(delta)
 }
 
 const columns: TableColumnsType<CatalogSku> = [
@@ -67,8 +110,307 @@ const columns: TableColumnsType<CatalogSku> = [
   },
 ]
 
-export default function CatalogPage(props: ShopReadProps) {
+const movementColumns: TableColumnsType<InventoryMovementItem> = [
+  {
+    title: "发生时间",
+    width: "16%",
+    dataIndex: "created_at",
+    className: styles.number,
+    render: (value: string) => dateTime.format(new Date(value)),
+  },
+  {
+    title: "变动类型",
+    width: "14%",
+    dataIndex: "movement_type",
+    render: (type: InventoryMovementType) => {
+      const clsName = movementToneMap[type] ?? "pill"
+      return <span className={styles[clsName as keyof typeof styles] ?? styles.pill}>{movementLabels[type] ?? type}</span>
+    },
+  },
+  {
+    title: "可售变化",
+    width: "12%",
+    dataIndex: "available_delta",
+    align: "right",
+    className: styles.number,
+    render: signedDelta,
+  },
+  {
+    title: "预占变化",
+    width: "12%",
+    dataIndex: "reserved_delta",
+    align: "right",
+    className: styles.number,
+    render: signedDelta,
+  },
+  {
+    title: "快照（可售/预占）",
+    width: "18%",
+    className: styles.number,
+    render: (_, row) => (
+      row.after_available !== null && row.after_reserved !== null
+        ? `${row.after_available} / ${row.after_reserved}`
+        : `${row.quantity} 件`
+    ),
+  },
+  {
+    title: "业务引用",
+    width: "28%",
+    dataIndex: "reference_id",
+    ellipsis: true,
+    className: styles.code,
+  },
+]
+
+function InventoryWorkspace({
+  shopRoles = ["operator"],
+  initialSku,
+  ...props
+}: CatalogPageProps & { initialSku?: string }) {
+  const { message } = AntApp.useApp()
+  const queryClient = useQueryClient()
+  const [selectedSku, setSelectedSku] = useState(initialSku ?? "")
+  const [movementType, setMovementType] = useState("")
+  const [modalOpen, setModalOpen] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [modalError, setModalError] = useState<string | null>(null)
+  const [form] = Form.useForm<{
+    movement_type: InventoryMutationType
+    quantity: number
+    reference_id: string
+    note?: string
+  }>()
+
+  const overviewQuery = useInventoryOverviewQuery(props, true)
+  const items = overviewQuery.isSuccess ? overviewQuery.data.items : []
+  const activeSku = selectedSku && items.some(item => item.sku_code === selectedSku)
+    ? selectedSku
+    : items[0]?.sku_code ?? ""
+  const currentSnapshot = items.find(item => item.sku_code === activeSku) ?? null
+  const lowStockItems = items.filter(item => item.low_stock)
+  const movementsQuery = useInventoryMovementsQuery(props, activeSku, movementType, Boolean(activeSku))
+  const canOperate = shopRoles.includes("operator") || shopRoles.includes("admin")
+
+  function openMutationModal() {
+    setModalError(null)
+    form.setFieldsValue({
+      movement_type: "reserve",
+      quantity: 1,
+      reference_id: `INV-${Date.now().toString().slice(-6)}`,
+      note: "",
+    })
+    setModalOpen(true)
+  }
+
+  async function handleSubmitMovement(values: {
+    movement_type: InventoryMutationType
+    quantity: number
+    reference_id: string
+    note?: string
+  }) {
+    if (!currentSnapshot) return
+    setModalError(null)
+    setSubmitting(true)
+    try {
+      const idemKey = `inv-${props.shopId}-${currentSnapshot.sku_code}-${Date.now()}`
+      const res = await applyInventoryMovementRequest(
+        props,
+        currentSnapshot.sku_code,
+        {
+          movement_type: values.movement_type,
+          quantity: values.quantity,
+          reference_id: values.reference_id,
+          expected_version: currentSnapshot.version ?? undefined,
+          note: values.note || undefined,
+        },
+        idemKey,
+      )
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "inventory"] })
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "catalog"] })
+      setModalOpen(false)
+      message?.success?.(res.message)
+    } catch (error) {
+      setModalError(error instanceof ApiError ? error.message : "库存操作失败，请稍后重试。")
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "inventory"] })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <section aria-labelledby="inventory-heading">
+      <div className={styles.inventoryToolbarRow}>
+        <div className={styles.sectionBar} style={{ flex: 1, marginBottom: 0 }}>
+          <h2 id="inventory-heading">库存与流水</h2>
+        </div>
+        <div className={styles.inventoryActions}>
+          <Select
+            className={styles.skuSelect}
+            aria-label="选择库存 SKU"
+            value={activeSku || undefined}
+            disabled={!overviewQuery.isSuccess || items.length === 0}
+            virtual={false}
+            options={items.map(item => ({
+              value: item.sku_code,
+              label: `${item.sku_code} · ${item.product_name}`,
+            }))}
+            onChange={setSelectedSku}
+          />
+          {canOperate && (
+            <Button
+              type="primary"
+              disabled={!currentSnapshot || currentSnapshot.available_qty === null}
+              onClick={openMutationModal}
+            >
+              库存操作
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {overviewQuery.isPending ? (
+        <div className={styles.feedback}><Spin size="small" /> 正在加载库存快照…</div>
+      ) : overviewQuery.isError ? (
+        <Alert
+          type="error"
+          showIcon
+          message="库存数据加载失败"
+          action={<Button onClick={() => { void overviewQuery.refetch() }}>重试</Button>}
+        />
+      ) : (
+        <>
+          <dl className={styles.snapshotBand}>
+            <div className={styles.snapshotHighlight}>
+              <dt>可售库存</dt>
+              <dd>{currentSnapshot?.available_qty ?? "—"} 件</dd>
+              <span>
+                当前 SKU · {currentSnapshot?.version ? `快照 V${currentSnapshot.version}` : "未建账"}
+              </span>
+            </div>
+            <div>
+              <dt>预占库存</dt>
+              <dd>{currentSnapshot?.reserved_qty ?? "—"} 件</dd>
+              <span>已预占，非可售</span>
+            </div>
+            <div>
+              <dt>当前库存合计</dt>
+              <dd>{currentSnapshot?.total_qty ?? "—"} 件</dd>
+              <span>可售 + 预占</span>
+            </div>
+            <div>
+              <dt>库存预警</dt>
+              <dd>{overviewQuery.data.low_stock_count} 个 SKU</dd>
+              <span>当前店铺 · 可售 &lt; {overviewQuery.data.low_stock_threshold} 件</span>
+            </div>
+          </dl>
+
+          <div className={styles.inventoryGrid}>
+            <div className={styles.panel}>
+              <div className={styles.toolbar}>
+                <strong className={styles.panelHeading}>不可变库存流水</strong>
+                <Select
+                  className={styles.filterCompact}
+                  aria-label="变动类型"
+                  value={movementType}
+                  virtual={false}
+                  options={[
+                    { value: "", label: "全部变动类型" },
+                    ...Object.entries(movementLabels).map(([value, label]) => ({ value, label })),
+                  ]}
+                  onChange={setMovementType}
+                />
+                {movementsQuery.isSuccess && (
+                  <span className={styles.shopCount}>共 {movementsQuery.data.length} 条记录</span>
+                )}
+              </div>
+              <Table<InventoryMovementItem>
+                className={styles.table}
+                rowKey="id"
+                columns={movementColumns}
+                pagination={false}
+                tableLayout="fixed"
+                dataSource={movementsQuery.isSuccess ? movementsQuery.data : []}
+                locale={{
+                  emptyText: movementsQuery.isPending
+                    ? <Spin size="small" />
+                    : "当前 SKU 暂无库存流水记录",
+                }}
+              />
+            </div>
+
+            <aside className={styles.sideStack}>
+              <section className={styles.sideCard} aria-labelledby="alert-heading">
+                <h3 id="alert-heading">库存预警</h3>
+                {lowStockItems.length === 0 ? (
+                  <p className={styles.okNotice}>当前店铺在售 SKU 库存均高于预警线（{overviewQuery.data.low_stock_threshold} 件）。</p>
+                ) : (
+                  <ul className={styles.alertList}>
+                    {lowStockItems.map(item => (
+                      <li key={item.sku_code} className={styles.warnNotice}>
+                        <strong>{item.sku_code} · {item.product_name}</strong>
+                        <p>当前可售 {item.available_qty} 件，低于预警线 {item.low_stock_threshold} 件。</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className={styles.sideCard} aria-labelledby="note-heading">
+                <h3 id="note-heading">流水与并发说明</h3>
+                <p className={styles.mutedNote}>
+                  通知仓库并不等于库存预占；唯有通过行级锁与乐观锁版本号（expected_version）落库的实际预占、释放、履约或入库事务，才会更新快照并写入不可变流水。
+                </p>
+              </section>
+            </aside>
+          </div>
+        </>
+      )}
+
+      <Modal
+        title={`库存并发操作 · ${currentSnapshot?.sku_code ?? ""}`}
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
+        onOk={() => { form.submit() }}
+        okText="提交变更"
+        cancelText="取消"
+        confirmLoading={submitting}
+      >
+        {modalError && (
+          <Alert type="error" showIcon message={modalError} style={{ marginBottom: 12 }} />
+        )}
+        <Form form={form} layout="vertical" onFinish={values => { void handleSubmitMovement(values) }}>
+          <Form.Item label="操作类型" name="movement_type" rules={[{ required: true }]}>
+            <Select
+              virtual={false}
+              options={[
+                { value: "reserve", label: "预占（可售 → 预占）" },
+                { value: "release", label: "释放（预占 → 可售）" },
+                { value: "fulfill", label: "履约扣减（扣减预占）" },
+                { value: "restock", label: "补货入库（增加可售）" },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item label="变更数量" name="quantity" rules={[{ required: true, message: "请输入数量" }]}>
+            <InputNumber min={1} max={100000} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item label="业务引用单号" name="reference_id" rules={[{ required: true, message: "请输入单号" }]}>
+            <Input placeholder="例如 ORD-20261111-01" />
+          </Form.Item>
+          <Form.Item label="备注说明" name="note">
+            <Input placeholder="可选备注" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </section>
+  )
+}
+
+export default function CatalogPage(props: CatalogPageProps) {
   const { onSignIn } = props
+  const [searchParams] = useSearchParams()
+  const initialTab = searchParams.get("tab") === "inventory" ? "inventory" : "overview"
+  const initialSku = searchParams.get("sku") ?? undefined
+  const [activeTab, setActiveTab] = useState<"overview" | "inventory">(initialTab)
   const query = useCatalogQuery(props)
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string>()
@@ -123,49 +465,74 @@ export default function CatalogPage(props: ShopReadProps) {
         <Link to="/">运营工作台</Link><span aria-hidden="true">/</span><span aria-current="page">商品运营</span>
       </nav>
       <h1>商品运营</h1>
-      <p className={styles.summary}>查看当前店铺的商品、规格、库存及价格。</p>
+      <p className={styles.summary}>查看当前店铺的商品、规格、库存快照与不可变库存流水。</p>
 
-      <section aria-labelledby="catalog-heading">
-        <div className={styles.sectionBar}><h2 id="catalog-heading">商品 / SKU</h2></div>
-        <div className={styles.panel}>
-          <div className={styles.toolbar}>
-            <Input
-              className={styles.search} type="search" prefix={<SearchOutlined aria-hidden="true" />}
-              aria-label="搜索商品或 SKU" placeholder="搜索商品或 SKU" value={search} disabled={!isReady}
-              onChange={event => { setSearch(event.target.value); setPage(1) }}
+      <div className={styles.viewTabs} role="tablist" aria-label="商品运营子视图">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "overview"}
+          className={`${styles.viewTab} ${activeTab === "overview" ? styles.viewTabActive : ""}`}
+          onClick={() => setActiveTab("overview")}
+        >
+          商品概览
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "inventory"}
+          className={`${styles.viewTab} ${activeTab === "inventory" ? styles.viewTabActive : ""}`}
+          onClick={() => setActiveTab("inventory")}
+        >
+          库存与流水
+        </button>
+      </div>
+
+      {activeTab === "inventory" ? (
+        <InventoryWorkspace {...props} initialSku={initialSku} />
+      ) : (
+        <section aria-labelledby="catalog-heading">
+          <div className={styles.sectionBar}><h2 id="catalog-heading">商品 / SKU</h2></div>
+          <div className={styles.panel}>
+            <div className={styles.toolbar}>
+              <Input
+                className={styles.search} type="search" prefix={<SearchOutlined aria-hidden="true" />}
+                aria-label="搜索商品或 SKU" placeholder="搜索商品或 SKU" value={search} disabled={!isReady}
+                onChange={event => { setSearch(event.target.value); setPage(1) }}
+              />
+              <Select
+                aria-label="商品分类" value={category ?? ""} disabled={!isReady} virtual={false}
+                options={[{ value: "", label: "全部分类" }, ...categories.map(value => ({ value, label: value }))]}
+                onChange={value => { setCategory(value || undefined); setPage(1) }}
+              />
+              <Select
+                aria-label="商品状态" value={status ?? ""} disabled={!isReady} virtual={false}
+                options={[{ value: "", label: "全部商品状态" }, ...Object.entries(statusLabels).map(([value, label]) => ({ value, label }))]}
+                onChange={value => { setStatus(value || undefined); setPage(1) }}
+              />
+              <Select
+                aria-label="库存状态" value={inventory ?? ""} disabled={!isReady} virtual={false}
+                options={[{ value: "", label: "全部库存状态" }, ...Object.entries(inventoryLabels).map(([value, label]) => ({ value, label }))]}
+                onChange={value => { setInventory(value || undefined); setPage(1) }}
+              />
+              {isReady && <span className={styles.shopCount}>当前店铺 · {rows.length} 个 SKU</span>}
+            </div>
+            <Table<CatalogSku>
+              className={styles.table} rowKey="sku_code" columns={columns} pagination={false} tableLayout="fixed"
+              dataSource={filtered.slice((visiblePage - 1) * pageSize, visiblePage * pageSize)}
+              locale={{ emptyText: emptyContent }}
             />
-            <Select
-              aria-label="商品分类" value={category ?? ""} disabled={!isReady} virtual={false}
-              options={[{ value: "", label: "全部分类" }, ...categories.map(value => ({ value, label: value }))]}
-              onChange={value => { setCategory(value || undefined); setPage(1) }}
-            />
-            <Select
-              aria-label="商品状态" value={status ?? ""} disabled={!isReady} virtual={false}
-              options={[{ value: "", label: "全部商品状态" }, ...Object.entries(statusLabels).map(([value, label]) => ({ value, label }))]}
-              onChange={value => { setStatus(value || undefined); setPage(1) }}
-            />
-            <Select
-              aria-label="库存状态" value={inventory ?? ""} disabled={!isReady} virtual={false}
-              options={[{ value: "", label: "全部库存状态" }, ...Object.entries(inventoryLabels).map(([value, label]) => ({ value, label }))]}
-              onChange={value => { setInventory(value || undefined); setPage(1) }}
-            />
-            {isReady && <span className={styles.shopCount}>当前店铺 · {rows.length} 个 SKU</span>}
+            {isReady && <footer className={styles.footer}>
+              <span aria-live="polite">共 {filtered.length} 条记录</span>
+              <nav className={styles.pager} aria-label="商品列表分页">
+                <Button size="small" disabled={visiblePage === 1} onClick={() => setPage(visiblePage - 1)}>上一页</Button>
+                <span className={styles.pageNumber} aria-current="page">{visiblePage}</span>
+                <Button size="small" disabled={visiblePage === pages} onClick={() => setPage(visiblePage + 1)}>下一页</Button>
+              </nav>
+            </footer>}
           </div>
-          <Table<CatalogSku>
-            className={styles.table} rowKey="sku_code" columns={columns} pagination={false} tableLayout="fixed"
-            dataSource={filtered.slice((visiblePage - 1) * pageSize, visiblePage * pageSize)}
-            locale={{ emptyText: emptyContent }}
-          />
-          {isReady && <footer className={styles.footer}>
-            <span aria-live="polite">共 {filtered.length} 条记录</span>
-            <nav className={styles.pager} aria-label="商品列表分页">
-              <Button size="small" disabled={visiblePage === 1} onClick={() => setPage(visiblePage - 1)}>上一页</Button>
-              <span className={styles.pageNumber} aria-current="page">{visiblePage}</span>
-              <Button size="small" disabled={visiblePage === pages} onClick={() => setPage(visiblePage + 1)}>下一页</Button>
-            </nav>
-          </footer>}
-        </div>
-      </section>
+        </section>
+      )}
     </main>
   )
 }
