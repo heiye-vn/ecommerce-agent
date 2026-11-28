@@ -93,14 +93,25 @@ class InventoryMovement(Base):
 class PriceHistory(Base):
     __tablename__ = "price_histories"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["shop_id", "sku_id"],
+            ["skus.shop_id", "skus.id"],
+            name="fk_price_histories_shop_sku",
+        ),
         CheckConstraint("old_price >= 0 AND new_price >= 0", name="ck_price_histories_amounts"),
         Index("ix_price_histories_sku_changed", "sku_id", "changed_at"),
+        Index("ix_price_histories_shop_sku_changed", "shop_id", "sku_id", "changed_at"),
     )
 
+    shop_id: Mapped[int | None]
     sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"))
     old_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     new_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approval_no: Mapped[str | None] = mapped_column(String(32))
+    price_change_request_id: Mapped[int | None] = mapped_column(ForeignKey("price_change_requests.id"))
+    reason: Mapped[str | None] = mapped_column(String(500))
 
 
 class Order(Base):

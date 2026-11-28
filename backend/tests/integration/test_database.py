@@ -52,6 +52,7 @@ def test_initial_migration_can_be_rolled_back_and_reapplied(
         "skus",
         "inventory",
         "inventory_movements",
+        "price_change_requests",
         "price_histories",
         "orders",
         "order_items",
@@ -66,6 +67,8 @@ def test_initial_migration_can_be_rolled_back_and_reapplied(
         "operation_requests",
         "audit_logs",
         "jobs",
+        "knowledge_chunks",
+        "knowledge_documents",
         "outbox_events",
         "notifications",
     }
