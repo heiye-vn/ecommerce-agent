@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import DEFAULT_SHOP_TIMEZONE, BusinessClock
 from app.core.errors import AppError
-from app.models import Job, OutboxEvent, Promotion, Role, Shop
+from app.models import Job, OutboxEvent, Promotion, Refund, Role, Shop
 from app.schemas.jobs import JobDetail, JobStatus, JobSummary, JobTab, JobType
 from app.services.audit import list_resource_audit_logs, write_audit_log
 from app.services.notifications import create_notification, notify_shop_roles
@@ -19,11 +19,13 @@ from app.services.promotions import (
     complete_active_promotion,
     schedule_approved_promotion,
 )
+from app.services.refunds import execute_approved_refund
 
 JOB_TYPE_TO_EVENT_TYPE: dict[str, str] = {
     "promotion_schedule": "promotion.schedule.requested",
     "promotion_activate": "promotion.activate.requested",
     "promotion_complete": "promotion.complete.requested",
+    "refund_execute": "refund.execute.requested",
 }
 
 
@@ -149,31 +151,12 @@ async def _run_fault_injector(fault_injector: FaultInjector | None, job: Job) ->
         await outcome
 
 
-async def run_loaded_job(
+async def _run_promotion_job(
     session: AsyncSession,
     *,
     job: Job,
     business_now: datetime,
-    fault_injector: FaultInjector | None = None,
 ) -> tuple[str, str]:
-    """执行已锁定的 Job（核心消费幂等实现：终态作业直接跳过，绝不重复执行）。"""
-    if job.status in ("succeeded", "failed"):
-        return job.status, "重复投递已幂等忽略，未重复执行业务状态变更。"
-
-    job.status = "running"
-    job.started_at = datetime.now(UTC)
-    await session.flush()
-
-    await _run_fault_injector(fault_injector, job)
-
-    if job.resource_type != "promotion":
-        raise AppError(
-            400,
-            "UNSUPPORTED_JOB_RESOURCE",
-            f"暂不支持作业资源类型 {job.resource_type}。",
-            detail="Unsupported job resource type",
-        )
-
     promotion = await session.scalar(
         select(Promotion).where(Promotion.shop_id == job.shop_id, Promotion.id == job.resource_id)
     )
@@ -254,6 +237,92 @@ async def run_loaded_job(
         return complete_status, msg
 
     raise AppError(400, "UNSUPPORTED_JOB_TYPE", f"不支持的任务类型 {job.job_type}。")
+
+
+async def _run_refund_job(
+    session: AsyncSession,
+    *,
+    job: Job,
+    business_now: datetime,
+) -> tuple[str, str]:
+    refund = await session.scalar(
+        select(Refund).where(Refund.shop_id == job.shop_id, Refund.id == job.resource_id)
+    )
+    if refund is None:
+        raise AppError(404, "REFUND_NOT_FOUND", "关联退款单不存在。", detail="Refund not found")
+    if job.job_type != "refund_execute":
+        raise AppError(400, "UNSUPPORTED_JOB_TYPE", f"不支持的任务类型 {job.job_type}。")
+
+    actor_id = int(job.payload.get("actor_id") or refund.requester_id)
+    exec_status, msg = await execute_approved_refund(
+        session,
+        organization_id=job.organization_id,
+        shop_id=job.shop_id,
+        refund_id=job.resource_id,
+        actor_id=actor_id,
+        business_now=business_now,
+    )
+    if exec_status == "succeeded":
+        job.status = "succeeded"
+        job.last_error = None
+        await create_notification(
+            session,
+            organization_id=job.organization_id,
+            shop_id=job.shop_id,
+            user_id=refund.requester_id,
+            category="refund",
+            title=f"退款单 {refund.refund_no} 已完成退款",
+            content=msg,
+            resource_type="refund",
+            resource_id=refund.id,
+        )
+    else:
+        job.status = "failed"
+        job.last_error = msg
+        await create_notification(
+            session,
+            organization_id=job.organization_id,
+            shop_id=job.shop_id,
+            user_id=refund.requester_id,
+            category="refund",
+            title=f"退款单 {refund.refund_no} 执行复核失败",
+            content=f"{msg} 请前往退款或订单详情核实最新状态。",
+            resource_type="refund",
+            resource_id=refund.id,
+        )
+    job.result_json = {"execution_status": exec_status, "message": msg}
+    job.finished_at = datetime.now(UTC)
+    return exec_status, msg
+
+
+async def run_loaded_job(
+    session: AsyncSession,
+    *,
+    job: Job,
+    business_now: datetime,
+    fault_injector: FaultInjector | None = None,
+) -> tuple[str, str]:
+    """执行已锁定的 Job（核心消费幂等实现：终态作业直接跳过，绝不重复执行）。"""
+    if job.status in ("succeeded", "failed"):
+        return job.status, "重复投递已幂等忽略，未重复执行业务状态变更。"
+
+    job.status = "running"
+    job.started_at = datetime.now(UTC)
+    await session.flush()
+
+    await _run_fault_injector(fault_injector, job)
+
+    if job.resource_type == "promotion":
+        return await _run_promotion_job(session, job=job, business_now=business_now)
+    if job.resource_type == "refund":
+        return await _run_refund_job(session, job=job, business_now=business_now)
+
+    raise AppError(
+        400,
+        "UNSUPPORTED_JOB_RESOURCE",
+        f"暂不支持作业资源类型 {job.resource_type}。",
+        detail="Unsupported job resource type",
+    )
 
 
 async def execute_job_in_transaction(
@@ -375,7 +444,7 @@ async def retry_dead_letter_job(
         raise AppError(
             409,
             "JOB_BUSINESS_FAILURE_NOT_RETRYABLE",
-            "业务复核失败不可直接重试，请在促销详情修订方案并重新送审。",
+            "业务复核失败不可直接重试，请核对最新业务状态后重新发起申请。",
             detail="Business validation failure cannot be retried directly",
         )
     if job.status != "dead_lettered":
@@ -424,8 +493,34 @@ def _job_retry_meta(status: str) -> tuple[bool, str | None]:
     if status == "dead_lettered":
         return True, "系统暂时性故障已超出自动重试上限，确认依赖恢复后可按原操作重试，不会重复建单。"
     if status == "failed":
-        return False, "SKU 下架、价格变化或时段冲突属于业务复核失败，不可自动或直接重试，请修订方案并重新审批。"
+        return (
+            False,
+            "SKU/价格/时段冲突或退款余额变化属于业务复核失败，不可自动或直接重试，请核对最新状态后重新提交。",
+        )
     return False, None
+
+
+def _resolve_job_resource_meta(
+    job: Job,
+    *,
+    promo_no: str | None,
+    promo_name: str | None,
+    promo_status: str | None,
+    refund_no: str | None,
+    refund_reason: str | None,
+    refund_status: str | None,
+) -> tuple[str, str, str | None]:
+    payload = job.payload or {}
+    if job.resource_type == "refund":
+        order_no = str(payload.get("order_no") or "")
+        reason = refund_reason or str(payload.get("reason") or "")
+        resource_no = refund_no or str(payload.get("refund_no") or job.resource_id)
+        resource_name = f"{order_no} · {reason}" if order_no and reason else (order_no or reason)
+        return resource_no, resource_name, refund_status
+
+    resource_no = promo_no or str(payload.get("promotion_no") or job.resource_id)
+    resource_name = promo_name or str(payload.get("promotion_name") or "")
+    return resource_no, resource_name, promo_status
 
 
 async def list_jobs(
@@ -435,10 +530,24 @@ async def list_jobs(
     tab: JobTab = "all",
 ) -> list[JobSummary]:
     query = (
-        select(Job, Promotion.promotion_no, Promotion.name)
+        select(
+            Job,
+            Promotion.promotion_no,
+            Promotion.name,
+            Refund.refund_no,
+            Refund.reason,
+        )
         .outerjoin(
             Promotion,
-            (Promotion.shop_id == Job.shop_id) & (Promotion.id == Job.resource_id),
+            (Promotion.shop_id == Job.shop_id)
+            & (Promotion.id == Job.resource_id)
+            & (Job.resource_type == "promotion"),
+        )
+        .outerjoin(
+            Refund,
+            (Refund.shop_id == Job.shop_id)
+            & (Refund.id == Job.resource_id)
+            & (Job.resource_type == "refund"),
         )
         .where(Job.shop_id == shop_id)
         .order_by(Job.updated_at.desc(), Job.id.desc())
@@ -450,8 +559,16 @@ async def list_jobs(
 
     rows = (await session.execute(query)).all()
     summaries: list[JobSummary] = []
-    for job, promo_no, promo_name in rows:
-        payload = job.payload or {}
+    for job, promo_no, promo_name, refund_no, refund_reason in rows:
+        resource_no, resource_name, _ = _resolve_job_resource_meta(
+            job,
+            promo_no=promo_no,
+            promo_name=promo_name,
+            promo_status=None,
+            refund_no=refund_no,
+            refund_reason=refund_reason,
+            refund_status=None,
+        )
         summaries.append(
             JobSummary(
                 id=job.id,
@@ -460,8 +577,8 @@ async def list_jobs(
                 status=cast(JobStatus, job.status),
                 resource_type=job.resource_type,
                 resource_id=job.resource_id,
-                resource_no=promo_no or str(payload.get("promotion_no") or job.resource_id),
-                resource_name=promo_name or str(payload.get("promotion_name") or ""),
+                resource_no=resource_no,
+                resource_name=resource_name,
                 resource_version=job.resource_version,
                 attempts=job.attempts,
                 max_attempts=job.max_attempts,
@@ -484,18 +601,42 @@ async def get_job_detail(
 ) -> JobDetail | None:
     row = (
         await session.execute(
-            select(Job, Promotion.promotion_no, Promotion.name, Promotion.status)
+            select(
+                Job,
+                Promotion.promotion_no,
+                Promotion.name,
+                Promotion.status,
+                Refund.refund_no,
+                Refund.reason,
+                Refund.status,
+            )
             .outerjoin(
                 Promotion,
-                (Promotion.shop_id == Job.shop_id) & (Promotion.id == Job.resource_id),
+                (Promotion.shop_id == Job.shop_id)
+                & (Promotion.id == Job.resource_id)
+                & (Job.resource_type == "promotion"),
+            )
+            .outerjoin(
+                Refund,
+                (Refund.shop_id == Job.shop_id)
+                & (Refund.id == Job.resource_id)
+                & (Job.resource_type == "refund"),
             )
             .where(Job.shop_id == shop_id, Job.id == job_id)
         )
     ).one_or_none()
     if row is None:
         return None
-    job, promo_no, promo_name, promo_status = row
-    payload = job.payload or {}
+    job, promo_no, promo_name, promo_status, refund_no, refund_reason, refund_status = row
+    resource_no, resource_name, resource_status = _resolve_job_resource_meta(
+        job,
+        promo_no=promo_no,
+        promo_name=promo_name,
+        promo_status=promo_status,
+        refund_no=refund_no,
+        refund_reason=refund_reason,
+        refund_status=refund_status,
+    )
     audit_logs = await list_resource_audit_logs(
         session,
         shop_id=shop_id,
@@ -510,8 +651,8 @@ async def get_job_detail(
         status=cast(JobStatus, job.status),
         resource_type=job.resource_type,
         resource_id=job.resource_id,
-        resource_no=promo_no or str(payload.get("promotion_no") or job.resource_id),
-        resource_name=promo_name or str(payload.get("promotion_name") or ""),
+        resource_no=resource_no,
+        resource_name=resource_name,
         resource_version=job.resource_version,
         attempts=job.attempts,
         max_attempts=job.max_attempts,
@@ -522,9 +663,9 @@ async def get_job_detail(
         created_at=job.created_at,
         updated_at=job.updated_at,
         idempotency_key=job.idempotency_key,
-        payload=payload,
+        payload=job.payload or {},
         result_json=job.result_json,
-        resource_status=promo_status,
+        resource_status=resource_status,
         can_retry=can_retry,
         retry_hint=retry_hint,
         audit_logs=audit_logs,

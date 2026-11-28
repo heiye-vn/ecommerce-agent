@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.schemas.promotions import AuditLogEntry
 
 JobStatus = Literal["pending", "running", "succeeded", "retrying", "failed", "dead_lettered"]
-JobType = Literal["promotion_schedule", "promotion_activate", "promotion_complete"]
+JobType = Literal["promotion_schedule", "promotion_activate", "promotion_complete", "refund_execute"]
 JobTab = Literal["all", "needs_attention", "completed"]
 
 

@@ -1,11 +1,11 @@
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
-from app.models import Approval, Promotion, Shop, User
+from app.models import Approval, Promotion, Refund, Shop, User
 from app.models.org import Role
 from app.schemas.approvals import (
     ApprovalDecisionResponse,
@@ -18,6 +18,7 @@ from app.services.audit import list_resource_audit_logs, write_audit_log
 from app.services.jobs import enqueue_job_with_outbox, run_loaded_job
 from app.services.notifications import create_notification
 from app.services.promotions import assert_promotion_transition
+from app.services.refunds import assert_refund_transition
 
 
 def _decision_boundary(
@@ -33,6 +34,54 @@ def _decision_boundary(
     if approval.requester_id == actor_id:
         return False, "禁止自审：申请人不能审批自己发起的方案，请由本店其他审批员处理。"
     return True, None
+
+
+def _extract_snapshot_meta(approval: Approval) -> tuple[str, str, str | None]:
+    snapshot = approval.payload_snapshot or {}
+    if approval.resource_type == "refund":
+        resource_no = str(snapshot.get("refund_no") or approval.resource_id)
+        order_no = str(snapshot.get("order_no") or "")
+        reason = str(snapshot.get("reason") or "")
+        resource_name = f"{order_no} · {reason}" if order_no and reason else (order_no or reason)
+        snapshot_amount = str(snapshot["amount"]) if "amount" in snapshot else None
+        return resource_no, resource_name, snapshot_amount
+
+    resource_no = str(snapshot.get("promotion_no") or approval.resource_id)
+    resource_name = str(snapshot.get("promotion_name") or "")
+    snapshot_amount = str(snapshot["promotion_price"]) if "promotion_price" in snapshot else None
+    return resource_no, resource_name, snapshot_amount
+
+
+def _build_approval_summary(
+    approval: Approval,
+    *,
+    requester_name: str,
+    approver_name: str | None,
+    can_decide: bool,
+) -> ApprovalSummary:
+    snapshot = approval.payload_snapshot or {}
+    resource_no, resource_name, snapshot_amount = _extract_snapshot_meta(approval)
+    return ApprovalSummary(
+        id=approval.id,
+        approval_no=approval.approval_no,
+        action_type=approval.action_type,
+        resource_type=approval.resource_type,
+        resource_id=approval.resource_id,
+        resource_no=resource_no,
+        resource_name=resource_name,
+        resource_version=approval.resource_version,
+        sku_code=snapshot.get("sku_code"),
+        snapshot_amount=snapshot_amount,
+        status=cast(ApprovalStatus, approval.status),
+        requester_id=approval.requester_id,
+        requester_name=requester_name,
+        approver_id=approval.approver_id,
+        approver_name=approver_name,
+        decision_comment=approval.decision_comment,
+        decided_at=approval.decided_at,
+        created_at=approval.created_at,
+        can_decide=can_decide,
+    )
 
 
 async def list_approvals(
@@ -67,28 +116,12 @@ async def list_approvals(
 
     results: list[ApprovalSummary] = []
     for approval, requester_name, approver_name in (await session.execute(query)).all():
-        snapshot = approval.payload_snapshot or {}
         can_decide, _ = _decision_boundary(approval, actor_id=actor_id, actor_roles=actor_roles)
         results.append(
-            ApprovalSummary(
-                id=approval.id,
-                approval_no=approval.approval_no,
-                action_type=approval.action_type,
-                resource_type=approval.resource_type,
-                resource_id=approval.resource_id,
-                resource_no=str(snapshot.get("promotion_no") or approval.resource_id),
-                resource_name=str(snapshot.get("promotion_name") or ""),
-                resource_version=approval.resource_version,
-                sku_code=snapshot.get("sku_code"),
-                snapshot_amount=str(snapshot["promotion_price"]) if "promotion_price" in snapshot else None,
-                status=cast(ApprovalStatus, approval.status),
-                requester_id=approval.requester_id,
+            _build_approval_summary(
+                approval,
                 requester_name=requester_name,
-                approver_id=approval.approver_id,
                 approver_name=approver_name,
-                decision_comment=approval.decision_comment,
-                decided_at=approval.decided_at,
-                created_at=approval.created_at,
                 can_decide=can_decide,
             )
         )
@@ -141,6 +174,13 @@ async def get_approval_detail(
             resource_status = promotion.status
             resource_failure_reason = promotion.failure_reason
             resource_conflict_no = promotion.conflict_promotion_no
+    elif approval.resource_type == "refund":
+        refund = await session.scalar(
+            select(Refund).where(Refund.shop_id == shop_id, Refund.id == approval.resource_id)
+        )
+        if refund is not None:
+            resource_status = refund.status
+            resource_failure_reason = refund.failure_reason
 
     audit_logs = await list_resource_audit_logs(
         session,
@@ -148,32 +188,18 @@ async def get_approval_detail(
         resource_type=approval.resource_type,
         resource_id=approval.resource_id,
     )
-    snapshot = approval.payload_snapshot or {}
     can_decide, cannot_reason = _decision_boundary(approval, actor_id=actor_id, actor_roles=actor_roles)
-
-    return ApprovalDetail(
-        id=approval.id,
-        approval_no=approval.approval_no,
-        action_type=approval.action_type,
-        resource_type=approval.resource_type,
-        resource_id=approval.resource_id,
-        resource_no=str(snapshot.get("promotion_no") or approval.resource_id),
-        resource_name=str(snapshot.get("promotion_name") or ""),
-        resource_version=approval.resource_version,
-        sku_code=snapshot.get("sku_code"),
-        snapshot_amount=str(snapshot["promotion_price"]) if "promotion_price" in snapshot else None,
-        status=cast(ApprovalStatus, approval.status),
-        requester_id=approval.requester_id,
+    summary = _build_approval_summary(
+        approval,
         requester_name=requester_name,
-        approver_id=approval.approver_id,
         approver_name=approver_name,
-        decision_comment=approval.decision_comment,
-        decided_at=approval.decided_at,
-        created_at=approval.created_at,
         can_decide=can_decide,
+    )
+    return ApprovalDetail(
+        **summary.model_dump(),
         shop_id=approval.shop_id,
         shop_name=shop_name,
-        payload_snapshot=snapshot,
+        payload_snapshot=approval.payload_snapshot or {},
         resource_status=resource_status,
         resource_failure_reason=resource_failure_reason,
         resource_conflict_promotion_no=resource_conflict_no,
@@ -182,75 +208,18 @@ async def get_approval_detail(
     )
 
 
-async def decide_approval(
+async def _decide_promotion_approval(
     session: AsyncSession,
     *,
     organization_id: int,
     shop_id: int,
-    approval_id: int,
+    approval: Approval,
     actor_id: int,
     actor_roles: list[Role],
     decision: str,
-    comment: str | None,
     business_now: datetime,
-    execute_schedule: bool = True,
+    execute_schedule: bool,
 ) -> ApprovalDecisionResponse:
-    if Role.APPROVER not in actor_roles:
-        raise AppError(
-            403,
-            "SHOP_ROLE_FORBIDDEN",
-            "当前店铺角色无权执行审批裁决。",
-            detail="Approver role required",
-        )
-
-    approval = await session.scalar(
-        select(Approval).where(Approval.id == approval_id).with_for_update()
-    )
-    if approval is None:
-        raise AppError(404, "APPROVAL_NOT_FOUND", "未找到对应的审批单。", detail="Approval not found")
-    if approval.shop_id != shop_id:
-        raise AppError(
-            403,
-            "CROSS_SHOP_APPROVAL_DENIED",
-            "禁止跨店审批：该审批单属于其他店铺。",
-            detail="Cross-shop approval denied",
-        )
-    if approval.status != "pending":
-        raise AppError(
-            409,
-            "APPROVAL_ALREADY_DECIDED",
-            "该审批单已处理完成，不能重复裁决。",
-            detail=f"Approval already in status {approval.status}",
-        )
-    if approval.requester_id == actor_id:
-        raise AppError(
-            403,
-            "SELF_APPROVAL_FORBIDDEN",
-            "禁止自审：申请人不能审批自己提交的方案。",
-            detail="Requester cannot approve own request",
-        )
-
-    if decision == "reject" and not (comment and comment.strip()):
-        raise AppError(
-            422,
-            "REJECTION_REASON_REQUIRED",
-            "驳回审批时必须填写处理意见。",
-            detail="Rejection comment is required",
-        )
-
-    now = datetime.now(UTC)
-    approval.approver_id = actor_id
-    approval.decision_comment = comment.strip() if comment else None
-    approval.decided_at = now
-
-    if approval.resource_type != "promotion":
-        raise AppError(
-            400,
-            "UNSUPPORTED_APPROVAL_RESOURCE",
-            f"暂不支持审批资源类型 {approval.resource_type}。",
-            detail="Unsupported approval resource type",
-        )
-
     promotion = await session.scalar(
         select(Promotion)
         .where(Promotion.shop_id == shop_id, Promotion.id == approval.resource_id)
@@ -341,7 +310,7 @@ async def decide_approval(
         resource_id=promotion.id,
     )
 
-    job_payload = {
+    job_payload: dict[str, Any] = {
         "promotion_id": promotion.id,
         "promotion_no": promotion.promotion_no,
         "promotion_name": promotion.name,
@@ -384,4 +353,243 @@ async def decide_approval(
         execution_message=execution_message,
         job_id=job.id,
         job_no=job.job_no,
+    )
+
+
+async def _decide_refund_approval(
+    session: AsyncSession,
+    *,
+    organization_id: int,
+    shop_id: int,
+    approval: Approval,
+    actor_id: int,
+    actor_roles: list[Role],
+    decision: str,
+    business_now: datetime,
+    execute_schedule: bool,
+) -> ApprovalDecisionResponse:
+    refund = await session.scalar(
+        select(Refund)
+        .where(Refund.shop_id == shop_id, Refund.id == approval.resource_id)
+        .with_for_update()
+    )
+    if refund is None:
+        raise AppError(404, "REFUND_NOT_FOUND", "未找到关联的退款申请。", detail="Refund not found")
+
+    snapshot = approval.payload_snapshot or {}
+    order_no = str(snapshot.get("order_no") or refund.order_id)
+    before_state = {"approval_status": "pending", "refund_status": refund.status}
+
+    if decision == "reject":
+        assert_refund_transition(refund.status, "rejected")
+        approval.status = "rejected"
+        refund.status = "rejected"
+        await write_audit_log(
+            session,
+            organization_id=organization_id,
+            shop_id=shop_id,
+            actor_id=actor_id,
+            action="approval.rejected",
+            resource_type="refund",
+            resource_id=refund.id,
+            before_json=before_state,
+            after_json={
+                "approval_status": "rejected",
+                "refund_status": "rejected",
+                "comment": approval.decision_comment,
+            },
+            metadata_json={"approval_id": approval.id, "approval_no": approval.approval_no},
+        )
+        await create_notification(
+            session,
+            organization_id=organization_id,
+            shop_id=shop_id,
+            user_id=approval.requester_id,
+            category="approval",
+            title=f"审批单 {approval.approval_no} 已驳回",
+            content=f"退款申请 {refund.refund_no}（订单 {order_no}）被驳回：{approval.decision_comment}。",
+            resource_type="refund",
+            resource_id=refund.id,
+        )
+        detail = await get_approval_detail(
+            session, shop_id=shop_id, approval_id=approval.id, actor_id=actor_id, actor_roles=actor_roles
+        )
+        assert detail is not None
+        return ApprovalDecisionResponse(
+            approval=detail,
+            execution_status="rejected",
+            execution_message="已驳回该退款申请，订单实付与可退余额未发生变化。",
+        )
+
+    assert_refund_transition(refund.status, "approved")
+    approval.status = "approved"
+    refund.status = "approved"
+    await write_audit_log(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        actor_id=actor_id,
+        action="approval.approved",
+        resource_type="refund",
+        resource_id=refund.id,
+        before_json=before_state,
+        after_json={
+            "approval_status": "approved",
+            "refund_status": "approved",
+            "comment": approval.decision_comment,
+        },
+        metadata_json={"approval_id": approval.id, "approval_no": approval.approval_no},
+    )
+    await create_notification(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        user_id=approval.requester_id,
+        category="approval",
+        title=f"审批单 {approval.approval_no} 已批准",
+        content=f"退款申请 {refund.refund_no}（订单 {order_no} · ¥{refund.amount:.2f}）已获批，即将复核并执行。",
+        resource_type="refund",
+        resource_id=refund.id,
+    )
+
+    job_payload: dict[str, Any] = {
+        "refund_id": refund.id,
+        "refund_no": refund.refund_no,
+        "order_id": refund.order_id,
+        "order_no": order_no,
+        "amount": str(refund.amount),
+        "reason": refund.reason,
+        "approval_id": approval.id,
+        "approval_no": approval.approval_no,
+        "requester_id": approval.requester_id,
+        "actor_id": actor_id,
+    }
+    job, _ = await enqueue_job_with_outbox(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        job_type="refund_execute",
+        resource_type="refund",
+        resource_id=refund.id,
+        resource_version=approval.resource_version,
+        idempotency_key=f"refund-execute-{refund.id}",
+        payload=job_payload,
+        business_day=business_now.date(),
+        emit_outbox=not execute_schedule,
+    )
+
+    if execute_schedule:
+        execution_status, execution_message = await run_loaded_job(
+            session,
+            job=job,
+            business_now=business_now,
+        )
+    else:
+        execution_status = "queued"
+        execution_message = f"审批已通过，退款执行任务 {job.job_no} 已入队等待后台复核并执行。"
+
+    detail = await get_approval_detail(
+        session, shop_id=shop_id, approval_id=approval.id, actor_id=actor_id, actor_roles=actor_roles
+    )
+    assert detail is not None
+    return ApprovalDecisionResponse(
+        approval=detail,
+        execution_status=execution_status,
+        execution_message=execution_message,
+        job_id=job.id,
+        job_no=job.job_no,
+    )
+
+
+async def decide_approval(
+    session: AsyncSession,
+    *,
+    organization_id: int,
+    shop_id: int,
+    approval_id: int,
+    actor_id: int,
+    actor_roles: list[Role],
+    decision: str,
+    comment: str | None,
+    business_now: datetime,
+    execute_schedule: bool = True,
+) -> ApprovalDecisionResponse:
+    if Role.APPROVER not in actor_roles:
+        raise AppError(
+            403,
+            "SHOP_ROLE_FORBIDDEN",
+            "当前店铺角色无权执行审批裁决。",
+            detail="Approver role required",
+        )
+
+    approval = await session.scalar(
+        select(Approval).where(Approval.id == approval_id).with_for_update()
+    )
+    if approval is None:
+        raise AppError(404, "APPROVAL_NOT_FOUND", "未找到对应的审批单。", detail="Approval not found")
+    if approval.shop_id != shop_id:
+        raise AppError(
+            403,
+            "CROSS_SHOP_APPROVAL_DENIED",
+            "禁止跨店审批：该审批单属于其他店铺。",
+            detail="Cross-shop approval denied",
+        )
+    if approval.status != "pending":
+        raise AppError(
+            409,
+            "APPROVAL_ALREADY_DECIDED",
+            "该审批单已处理完成，不能重复裁决。",
+            detail=f"Approval already in status {approval.status}",
+        )
+    if approval.requester_id == actor_id:
+        raise AppError(
+            403,
+            "SELF_APPROVAL_FORBIDDEN",
+            "禁止自审：申请人不能审批自己提交的方案。",
+            detail="Requester cannot approve own request",
+        )
+
+    if decision == "reject" and not (comment and comment.strip()):
+        raise AppError(
+            422,
+            "REJECTION_REASON_REQUIRED",
+            "驳回审批时必须填写处理意见。",
+            detail="Rejection comment is required",
+        )
+
+    now = datetime.now(UTC)
+    approval.approver_id = actor_id
+    approval.decision_comment = comment.strip() if comment else None
+    approval.decided_at = now
+
+    if approval.resource_type == "promotion":
+        return await _decide_promotion_approval(
+            session,
+            organization_id=organization_id,
+            shop_id=shop_id,
+            approval=approval,
+            actor_id=actor_id,
+            actor_roles=actor_roles,
+            decision=decision,
+            business_now=business_now,
+            execute_schedule=execute_schedule,
+        )
+    if approval.resource_type == "refund":
+        return await _decide_refund_approval(
+            session,
+            organization_id=organization_id,
+            shop_id=shop_id,
+            approval=approval,
+            actor_id=actor_id,
+            actor_roles=actor_roles,
+            decision=decision,
+            business_now=business_now,
+            execute_schedule=execute_schedule,
+        )
+
+    raise AppError(
+        400,
+        "UNSUPPORTED_APPROVAL_RESOURCE",
+        f"暂不支持审批资源类型 {approval.resource_type}。",
+        detail="Unsupported approval resource type",
     )
