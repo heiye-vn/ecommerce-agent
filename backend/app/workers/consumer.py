@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from aio_pika.abc import AbstractIncomingMessage
+from aio_pika.abc import AbstractIncomingMessage, AbstractQueue
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import BusinessClock
@@ -83,12 +83,18 @@ async def run_consumer(prefetch_count: int = 10) -> None:
         async with connection:
             channel = await connection.channel()
             await channel.set_qos(prefetch_count=prefetch_count)
-            topology = await declare_topology(channel, TopologyConfig())
-            logger.info("Consumer worker started: queue=%s", topology.queue.name)
+            topology = await declare_topology(channel, TopologyConfig.production())
+            queues: list[AbstractQueue] = [topology.queue]
+            if topology.refund_queue is not None:
+                queues.append(topology.refund_queue)
+            logger.info("Consumer worker started: queues=%s", [q.name for q in queues])
 
-            async with topology.queue.iterator() as queue_iter:
-                async for incoming in queue_iter:
-                    await handle_incoming_message(incoming, session_factory, clock)
+            async def _consume(queue: AbstractQueue) -> None:
+                async with queue.iterator() as queue_iter:
+                    async for incoming in queue_iter:
+                        await handle_incoming_message(incoming, session_factory, clock)
+
+            await asyncio.gather(*(_consume(queue) for queue in queues))
     finally:
         await engine.dispose()
 

@@ -78,7 +78,7 @@ async def run_outbox_publisher(poll_interval_seconds: float = 1.0) -> None:
     try:
         async with connection:
             channel = await connection.channel(publisher_confirms=True)
-            topology = await declare_topology(channel, TopologyConfig())
+            topology = await declare_topology(channel, TopologyConfig.production())
             logger.info("Outbox publisher started: exchange=%s", topology.exchange.name)
             while True:
                 published = await publish_pending_batch(session_factory, topology.exchange)

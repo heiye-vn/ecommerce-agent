@@ -22,6 +22,17 @@ class TopologyConfig:
         "promotion.activate.requested",
         "promotion.complete.requested",
     )
+    refund_queue_name: str | None = None
+    refund_dlq_name: str | None = None
+    refund_dlq_routing_key: str = "refund.dlq"
+    refund_routing_keys: tuple[str, ...] = ("refund.execute.requested",)
+
+    @classmethod
+    def production(cls) -> "TopologyConfig":
+        return cls(
+            refund_queue_name="commerce.jobs.refund",
+            refund_dlq_name="commerce.jobs.refund.dlq",
+        )
 
 
 @dataclass(frozen=True)
@@ -30,6 +41,8 @@ class DeclaredTopology:
     dlx: AbstractExchange
     queue: AbstractQueue
     dlq: AbstractQueue
+    refund_queue: AbstractQueue | None = None
+    refund_dlq: AbstractQueue | None = None
 
 
 async def connect_rabbitmq(rabbitmq_url: str) -> AbstractRobustConnection:
@@ -38,30 +51,55 @@ async def connect_rabbitmq(rabbitmq_url: str) -> AbstractRobustConnection:
 
 async def declare_topology(
     channel: AbstractChannel,
-    config: TopologyConfig = TopologyConfig(),
+    config: TopologyConfig | None = None,
 ) -> DeclaredTopology:
+    resolved = config or TopologyConfig()
     exchange = await channel.declare_exchange(
-        config.exchange_name,
+        resolved.exchange_name,
         ExchangeType.DIRECT,
         durable=True,
     )
     dlx = await channel.declare_exchange(
-        config.dlx_name,
+        resolved.dlx_name,
         ExchangeType.DIRECT,
         durable=True,
     )
-    dlq = await channel.declare_queue(config.dlq_name, durable=True)
-    await dlq.bind(dlx, routing_key=config.dlq_routing_key)
+    dlq = await channel.declare_queue(resolved.dlq_name, durable=True)
+    await dlq.bind(dlx, routing_key=resolved.dlq_routing_key)
 
     queue = await channel.declare_queue(
-        config.queue_name,
+        resolved.queue_name,
         durable=True,
         arguments={
-            "x-dead-letter-exchange": config.dlx_name,
-            "x-dead-letter-routing-key": config.dlq_routing_key,
+            "x-dead-letter-exchange": resolved.dlx_name,
+            "x-dead-letter-routing-key": resolved.dlq_routing_key,
         },
     )
-    for routing_key in config.routing_keys:
+    for routing_key in resolved.routing_keys:
         await queue.bind(exchange, routing_key=routing_key)
 
-    return DeclaredTopology(exchange=exchange, dlx=dlx, queue=queue, dlq=dlq)
+    refund_queue: AbstractQueue | None = None
+    refund_dlq: AbstractQueue | None = None
+    if resolved.refund_queue_name:
+        dlq_name = resolved.refund_dlq_name or f"{resolved.refund_queue_name}.dlq"
+        refund_dlq = await channel.declare_queue(dlq_name, durable=True)
+        await refund_dlq.bind(dlx, routing_key=resolved.refund_dlq_routing_key)
+        refund_queue = await channel.declare_queue(
+            resolved.refund_queue_name,
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": resolved.dlx_name,
+                "x-dead-letter-routing-key": resolved.refund_dlq_routing_key,
+            },
+        )
+        for routing_key in resolved.refund_routing_keys:
+            await refund_queue.bind(exchange, routing_key=routing_key)
+
+    return DeclaredTopology(
+        exchange=exchange,
+        dlx=dlx,
+        queue=queue,
+        dlq=dlq,
+        refund_queue=refund_queue,
+        refund_dlq=refund_dlq,
+    )
