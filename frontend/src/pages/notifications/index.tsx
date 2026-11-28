@@ -30,7 +30,7 @@ const dateTime = new Intl.DateTimeFormat("sv-SE", {
 function categoryIcon(category: NotificationCategory) {
   if (category === "approval") return <SafetyCertificateOutlined />
   if (category === "job") return <ScheduleOutlined />
-  if (category === "promotion") return <TagOutlined />
+  if (category === "promotion" || category === "price_change") return <TagOutlined />
   if (category === "refund") return <DollarOutlined />
   return <BellOutlined />
 }
@@ -40,6 +40,7 @@ function targetLink(item: NotificationItem): { to: string; label: string } | nul
   if (item.resource_type === "approval") return { to: `/approvals/${item.resource_id}`, label: "审阅审批" }
   if (item.resource_type === "promotion") return { to: `/promotions/${item.resource_id}`, label: "查看活动" }
   if (item.resource_type === "refund") return { to: `/orders/refunds/${item.resource_id}`, label: "查看退款" }
+  if (item.resource_type === "price_change") return { to: `/catalog/price-changes/${item.resource_id}`, label: "查看调价" }
   if (item.resource_type === "job") return { to: `/tasks/${item.resource_id}`, label: "处理任务" }
   return null
 }

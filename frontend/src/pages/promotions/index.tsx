@@ -2,8 +2,9 @@ import { PlusOutlined, SearchOutlined } from "@ant-design/icons"
 import { useQueryClient } from "@tanstack/react-query"
 import { Alert, App as AntApp, Button, Input, Modal, Select, Spin, Table } from "antd"
 import type { TableColumnsType } from "antd"
-import { useState, type FormEvent } from "react"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { useMemo, useState, type FormEvent } from "react"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
+import type * as echarts from "echarts"
 
 import { ApiError } from "../../api/client"
 import {
@@ -12,11 +13,13 @@ import {
   submitPromotionRequest,
   useCatalogQuery,
   usePromotionDetailQuery,
+  usePromotionReviewQuery,
   usePromotionsQuery,
   type PromotionStatus,
   type PromotionSummary,
 } from "../../api/queries"
 import type { ShopReadProps } from "../../auth"
+import EChartBox from "../../components/EChartBox"
 import styles from "./index.module.css"
 
 type PageProps = ShopReadProps & {
@@ -104,9 +107,305 @@ function Feedback({
   return <Alert showIcon type="error" message="促销数据加载失败" action={<Button onClick={onRetry}>重试</Button>} />
 }
 
+function buildCalendarDays(year: number, monthIndex: number) {
+  const firstDay = new Date(Date.UTC(year, monthIndex, 1))
+  const startOffset = (firstDay.getUTCDay() + 6) % 7
+  const gridStart = new Date(Date.UTC(year, monthIndex, 1 - startOffset))
+  const days: { isoDate: string; dayNum: number; inMonth: boolean }[] = []
+  for (let i = 0; i < 42; i += 1) {
+    const d = new Date(gridStart.getTime() + i * 86_400_000)
+    const isoDate = d.toISOString().slice(0, 10)
+    days.push({
+      isoDate,
+      dayNum: d.getUTCDate(),
+      inMonth: d.getUTCMonth() === monthIndex,
+    })
+  }
+  return days
+}
+
+function PromotionCalendarTab({
+  rows,
+  onSelectReview,
+}: {
+  rows: PromotionSummary[]
+  onSelectReview: (promotionId: number) => void
+}) {
+  const [monthCursor, setMonthCursor] = useState({ year: 2026, month: 10 })
+  const [selectedDate, setSelectedDate] = useState("2026-11-21")
+  const [skuFilter, setSkuFilter] = useState("")
+
+  const visibleRows = rows.filter(r => (!skuFilter || r.sku_code === skuFilter))
+  const calendarDays = useMemo(
+    () => buildCalendarDays(monthCursor.year, monthCursor.month),
+    [monthCursor.month, monthCursor.year],
+  )
+
+  function eventsForDate(isoDate: string) {
+    return visibleRows.filter(item => {
+      const s = item.starts_at.slice(0, 10)
+      const e = item.ends_at.slice(0, 10)
+      return isoDate >= s && isoDate < e
+    })
+  }
+
+  function shiftMonth(delta: number) {
+    const next = new Date(Date.UTC(monthCursor.year, monthCursor.month + delta, 1))
+    setMonthCursor({ year: next.getUTCFullYear(), month: next.getUTCMonth() })
+  }
+
+  const selectedEvents = eventsForDate(selectedDate)
+  const monthLabel = `${monthCursor.year} 年 ${monthCursor.month + 1} 月`
+  const skuOptions = [...new Set(rows.map(r => r.sku_code))]
+
+  return (
+    <section aria-labelledby="calendar-heading">
+      <div className={styles.calendarGridWrap}>
+        <div className={styles.panel}>
+          <div className={styles.calendarHeaderRow}>
+            <strong id="calendar-heading">{monthLabel}</strong>
+            <div className={styles.headerActions}>
+              <Select
+                className={styles.filter}
+                aria-label="筛选日历 SKU"
+                value={skuFilter}
+                virtual={false}
+                options={[{ value: "", label: "全部 SKU" }, ...skuOptions.map(code => ({ value: code, label: code }))]}
+                onChange={setSkuFilter}
+              />
+              <Button size="small" onClick={() => shiftMonth(-1)}>上月</Button>
+              <Button size="small" onClick={() => { setMonthCursor({ year: 2026, month: 10 }); setSelectedDate("2026-11-21") }}>回到基准月</Button>
+              <Button size="small" onClick={() => shiftMonth(1)}>下月</Button>
+            </div>
+          </div>
+          <div className={styles.calendarWeekRow}>
+            {["周一", "周二", "周三", "周四", "周五", "周六", "周日"].map(w => <span key={w}>{w}</span>)}
+          </div>
+          <div className={styles.calendarDays}>
+            {calendarDays.map(cell => {
+              const items = eventsForDate(cell.isoDate)
+              return (
+                <button
+                  key={cell.isoDate}
+                  type="button"
+                  className={`${styles.calendarCell} ${!cell.inMonth ? styles.calendarCellOutside : ""} ${selectedDate === cell.isoDate ? styles.calendarCellSelected : ""}`}
+                  onClick={() => setSelectedDate(cell.isoDate)}
+                >
+                  <span className={styles.calendarDayNum}>{cell.dayNum}</span>
+                  {items.slice(0, 2).map(ev => (
+                    <span
+                      key={ev.id}
+                      className={`${styles.calendarEventTag} ${ev.status === "completed" ? styles.calendarEventMuted : ""}`}
+                    >
+                      {ev.name}
+                    </span>
+                  ))}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <aside className={styles.leftStack}>
+          <section className={styles.card} aria-labelledby="day-events-heading">
+            <div className={styles.cardHeader}>
+              <h2 id="day-events-heading">{selectedDate} 排期活动</h2>
+              <span className={styles.pill}>{selectedEvents.length} 场</span>
+            </div>
+            {selectedEvents.length === 0 ? (
+              <p className={styles.summary}>当日暂无覆盖的促销时段（结束日期 00:00 不占用当天）。</p>
+            ) : (
+              <div className={styles.approvalList}>
+                {selectedEvents.map(ev => (
+                  <div key={ev.id} className={styles.approvalRow}>
+                    <div>
+                      <strong>{ev.name}</strong>
+                      <div style={{ color: "#71717a", fontSize: 12 }}>
+                        {ev.sku_code} · {formatShortWindow(ev.starts_at, ev.ends_at)}
+                      </div>
+                    </div>
+                    <div className={styles.headerActions}>
+                      <StatusPill status={ev.status} />
+                      <Button size="small" onClick={() => onSelectReview(ev.id)}>复盘</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+          <section className={styles.card}>
+            <div className={styles.cardHeader}>
+              <h2>时段口径</h2>
+            </div>
+            <p className={styles.summary}>
+              日历按店铺当地时区（Asia/Shanghai）展示。活动结束时间（00:00）不占用下一自然日。
+            </p>
+          </section>
+        </aside>
+      </div>
+    </section>
+  )
+}
+
+function PromotionReviewTab({
+  rows,
+  selectedPromoId,
+  onChangePromoId,
+  ...props
+}: PageProps & {
+  rows: PromotionSummary[]
+  selectedPromoId: number | null
+  onChangePromoId: (id: number) => void
+}) {
+  const defaultId = selectedPromoId
+    ?? rows.find(r => r.status === "completed")?.id
+    ?? rows.find(r => r.status === "active")?.id
+    ?? rows[0]?.id
+    ?? null
+  const reviewQuery = usePromotionReviewQuery(props, defaultId, Boolean(defaultId))
+  const review = reviewQuery.isSuccess ? reviewQuery.data : undefined
+
+  const chartOption = useMemo<echarts.EChartsCoreOption>(() => {
+    if (!review) return {}
+    return {
+      grid: { left: 42, right: 16, top: 20, bottom: 28 },
+      tooltip: { trigger: "axis" },
+      legend: { bottom: 0, left: 0, textStyle: { color: "#52525b", fontSize: 12 } },
+      xAxis: {
+        type: "category",
+        data: review.daily_comparison.map(pt => pt.day_label),
+        axisLine: { lineStyle: { color: "#e4e4e7" } },
+      },
+      yAxis: {
+        type: "value",
+        splitLine: { lineStyle: { color: "#f4f4f5" } },
+      },
+      series: [
+        {
+          name: "活动期",
+          type: "line",
+          smooth: false,
+          symbol: "circle",
+          symbolSize: 7,
+          data: review.daily_comparison.map(pt => pt.promo_units),
+          lineStyle: { color: "#166534", width: 2.5 },
+          itemStyle: { color: "#166534" },
+          areaStyle: { color: "rgba(193, 251, 212, 0.4)" },
+        },
+        {
+          name: "基线期",
+          type: "line",
+          smooth: false,
+          symbol: "none",
+          data: review.daily_comparison.map(pt => pt.baseline_units),
+          lineStyle: { color: "#86efac", width: 2, type: "dashed" },
+          itemStyle: { color: "#86efac" },
+        },
+      ],
+    }
+  }, [review])
+
+  if (rows.length === 0) {
+    return <Alert type="info" showIcon message="当前店铺暂无可复盘的促销活动。" />
+  }
+
+  return (
+    <section aria-labelledby="review-tab-heading">
+      <div className={styles.headerBar} style={{ marginBottom: 14 }}>
+        <div>
+          <h2 id="review-tab-heading" style={{ margin: 0, fontSize: 18 }}>活动效果对比与复盘</h2>
+          <p className={styles.summary}>对比活动自然日与活动前等长基线期的真实支付件数与销售额。</p>
+        </div>
+        <Select<number>
+          className={styles.search}
+          aria-label="选择复盘活动"
+          value={defaultId ?? undefined}
+          virtual={false}
+          options={rows.map(r => ({ value: r.id, label: `${r.name} · ${r.promotion_no}` }))}
+          onChange={onChangePromoId}
+        />
+      </div>
+
+      {reviewQuery.isPending ? (
+        <div className={styles.feedback}><Spin size="small" /> 正在统计活动复盘数据…</div>
+      ) : reviewQuery.isError || !review ? (
+        <Feedback error={reviewQuery.error} loading={false} onRetry={() => { void reviewQuery.refetch() }} onSignIn={props.onSignIn} />
+      ) : (
+        <>
+          <section className={styles.metricsStrip} aria-label="活动复盘核心指标">
+            <div className={`${styles.metricCard} ${styles.metricHighlight}`}>
+              <span>活动期间销量</span>
+              <strong>{review.promo_units} 件</strong>
+              <p>
+                支付件数{review.units_change_pct !== null ? ` · 较基线 ${Number(review.units_change_pct) >= 0 ? "+" : ""}${review.units_change_pct}%` : ""}
+              </p>
+            </div>
+            <div className={styles.metricCard}>
+              <span>活动销售额</span>
+              <strong>¥{Number(review.promo_gmv).toLocaleString("zh-CN", { maximumFractionDigits: 2 })}</strong>
+              <p>活动 SKU 支付额</p>
+            </div>
+            <div className={styles.metricCard}>
+              <span>基线销量</span>
+              <strong>{review.baseline_units} 件</strong>
+              <p>活动前 {review.duration_days} 个完整自然日</p>
+            </div>
+            <div className={styles.metricCard}>
+              <span>观测窗口</span>
+              <strong>{review.duration_days} 天</strong>
+              <p>{review.promo_start_date.slice(5)} → {review.promo_end_date.slice(5)}</p>
+            </div>
+          </section>
+
+          <div className={styles.detailGrid}>
+            <section className={styles.card} aria-labelledby="review-chart-heading">
+              <div className={styles.cardHeader}>
+                <h2 id="review-chart-heading">活动销量与前期基线</h2>
+                <span className={styles.pill}>件 · 按日对齐</span>
+              </div>
+              <EChartBox
+                option={chartOption}
+                height={250}
+                ariaLabel={`${review.promotion_name} 活动期与基线期按日销量对比`}
+              />
+            </section>
+
+            <aside className={styles.leftStack}>
+              <section className={styles.card} aria-labelledby="review-fact-heading">
+                <div className={styles.cardHeader}>
+                  <h2 id="review-fact-heading">数据口径</h2>
+                  <span className={`${styles.pill} ${styles.pillScheduled}`}>数据事实</span>
+                </div>
+                <dl className={styles.factMetaList}>
+                  <div><dt>活动编号</dt><dd>{review.promotion_no}（{review.sku_codes.join("、") || "—"}）</dd></div>
+                  <div><dt>活动期</dt><dd>{review.promo_start_date} 至 {review.promo_end_date}</dd></div>
+                  <div><dt>基线期</dt><dd>{review.baseline_start_date} 至 {review.baseline_end_date}</dd></div>
+                  <div><dt>口径说明</dt><dd>{review.methodology}</dd></div>
+                </dl>
+              </section>
+
+              <section className={styles.card} aria-labelledby="review-note-heading">
+                <div className={styles.cardHeader}>
+                  <h2 id="review-note-heading">复盘建议</h2>
+                </div>
+                <div className={styles.speculateBox}>{review.review_note}</div>
+              </section>
+            </aside>
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
 function PromotionList(props: PageProps) {
   const { message } = AntApp.useApp()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const tabParam = searchParams.get("tab")
+  const initialTab = tabParam === "calendar" ? "calendar" : tabParam === "review" ? "review" : "list"
+  const [activeTab, setActiveTab] = useState<"list" | "calendar" | "review">(initialTab)
+  const [reviewPromoId, setReviewPromoId] = useState<number | null>(null)
   const queryClient = useQueryClient()
   const query = usePromotionsQuery(props)
   const catalogQuery = useCatalogQuery(props)
@@ -212,7 +511,53 @@ function PromotionList(props: PageProps) {
         )}
       </div>
 
-      <section aria-labelledby="promotions-heading">
+      <div className={styles.viewTabs} role="tablist" aria-label="促销管理子视图">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "list"}
+          className={`${styles.viewTab} ${activeTab === "list" ? styles.viewTabActive : ""}`}
+          onClick={() => setActiveTab("list")}
+        >
+          活动列表
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "calendar"}
+          className={`${styles.viewTab} ${activeTab === "calendar" ? styles.viewTabActive : ""}`}
+          onClick={() => setActiveTab("calendar")}
+        >
+          促销日历
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "review"}
+          className={`${styles.viewTab} ${activeTab === "review" ? styles.viewTabActive : ""}`}
+          onClick={() => setActiveTab("review")}
+        >
+          活动复盘
+        </button>
+      </div>
+
+      {activeTab === "calendar" ? (
+        <PromotionCalendarTab
+          rows={rows}
+          onSelectReview={(id) => {
+            setReviewPromoId(id)
+            setActiveTab("review")
+          }}
+        />
+      ) : activeTab === "review" ? (
+        <PromotionReviewTab
+          {...props}
+          rows={rows}
+          selectedPromoId={reviewPromoId}
+          onChangePromoId={setReviewPromoId}
+        />
+      ) : (
+        <section aria-labelledby="promotions-heading">
         <div className={styles.panel}>
           <div className={styles.toolbar}>
             <Input
@@ -268,13 +613,14 @@ function PromotionList(props: PageProps) {
           )}
         </div>
       </section>
+      )}
 
       <Modal
         title="新建促销草案并提交审批"
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
       >
         <form onSubmit={handleCreateSubmit} className={styles.reviseForm}>
           {formError && <div className={styles.fullSpan}><Alert type="error" showIcon message={formError} /></div>}

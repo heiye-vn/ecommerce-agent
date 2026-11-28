@@ -7,8 +7,10 @@ import App from "./App"
 import { createQueryClient, type NotificationListResponse } from "./api/queries"
 import { login, logout, refreshSession, type LoginValues, type Session, type ShopAccess } from "./auth"
 import AgentPage from "./pages/agent"
+import AnalyticsPage from "./pages/analytics"
 import ApprovalsPage from "./pages/approvals"
 import CatalogPage from "./pages/catalog"
+import KnowledgePage from "./pages/knowledge"
 import LoginPage from "./pages/login"
 import NotificationsPage from "./pages/notifications"
 import OrdersPage from "./pages/orders"
@@ -145,7 +147,19 @@ function AuthRoutes() {
         <Route
           path="/catalog"
           element={shop && shopRead
-            ? <CatalogPage key={shop.id} shopRoles={shop.roles} {...shopRead} />
+            ? <CatalogPage key={shop.id} shopRoles={shop.roles} userId={session?.user.id ?? 0} {...shopRead} />
+            : null}
+        />
+        <Route
+          path="/catalog/price-changes/:requestId"
+          element={shop && shopRead
+            ? <CatalogPage key={shop.id} shopRoles={shop.roles} userId={session?.user.id ?? 0} {...shopRead} />
+            : null}
+        />
+        <Route
+          path="/analytics"
+          element={shop && shopRead
+            ? <AnalyticsPage shopName={shop.name} {...shopRead} />
             : null}
         />
         <Route
@@ -206,6 +220,12 @@ function AuthRoutes() {
           path="/notifications"
           element={shop && shopRead
             ? <NotificationsPage shopName={shop.name} {...shopRead} />
+            : null}
+        />
+        <Route
+          path="/knowledge"
+          element={shop && shopRead
+            ? <KnowledgePage shopName={shop.name} shopRoles={shop.roles} {...shopRead} />
             : null}
         />
       </Route>

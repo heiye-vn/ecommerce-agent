@@ -37,6 +37,7 @@ const typeLabels: Record<JobType, string> = {
   promotion_activate: "到点生效",
   promotion_complete: "到期结束",
   refund_execute: "退款执行",
+  price_change_execute: "调价执行",
 }
 
 const auditActionLabels: Record<string, string> = {
@@ -54,6 +55,10 @@ const auditActionLabels: Record<string, string> = {
   "refund.cancelled": "已撤回退款申请",
   "refund.succeeded": "沙箱退款执行成功",
   "refund.execution_failed": "退款实时复核失败",
+  "price_change.submitted": "已提交调价审批",
+  "price_change.cancelled": "已撤回调价申请",
+  "price_change.succeeded": "复核通过并更新售价",
+  "price_change.execution_failed": "调价实时复核失败",
   "job.dead_lettered": "重试超限转入死信队列",
   "job.manual_retry": "人工按原操作重新投递",
 }
@@ -295,10 +300,13 @@ function TaskDetailView({ jobId, ...props }: PageProps & { jobId: string }) {
   }
 
   const isRefundJob = detail?.resource_type === "refund"
+  const isPriceJob = detail?.resource_type === "price_change"
   const resourcePath = detail
     ? isRefundJob
       ? `/orders/refunds/${detail.resource_id}`
-      : `/promotions/${detail.resource_id}`
+      : isPriceJob
+        ? `/catalog/price-changes/${detail.resource_id}`
+        : `/promotions/${detail.resource_id}`
     : "/tasks"
 
   return (
@@ -312,8 +320,8 @@ function TaskDetailView({ jobId, ...props }: PageProps & { jobId: string }) {
         <div>
           <h1>
             {detail?.status === "dead_lettered" || detail?.status === "failed"
-              ? isRefundJob ? "退款执行异常" : "促销执行异常"
-              : isRefundJob ? "退款执行任务" : "促销执行任务"}
+              ? isRefundJob ? "退款执行异常" : isPriceJob ? "调价执行异常" : "促销执行异常"
+              : isRefundJob ? "退款执行任务" : isPriceJob ? "调价执行任务" : "促销执行任务"}
           </h1>
           <p className={styles.summary}>
             {detail
@@ -391,7 +399,7 @@ function TaskDetailView({ jobId, ...props }: PageProps & { jobId: string }) {
                 </div>
                 <dl className={styles.specList}>
                   <div>
-                    <dt>{isRefundJob ? "关联退款单" : "关联活动"}</dt>
+                    <dt>{isRefundJob ? "关联退款单" : isPriceJob ? "关联调价单" : "关联活动"}</dt>
                     <dd>
                       <Link className={styles.actionLink} to={resourcePath}>
                         {detail.resource_no}
@@ -412,7 +420,7 @@ function TaskDetailView({ jobId, ...props }: PageProps & { jobId: string }) {
                     </Button>
                   )}
                   <Link className={styles.outlineLinkBtn} to={resourcePath}>
-                    {isRefundJob ? "查看退款详情" : "查看促销活动详情"}
+                    {isRefundJob ? "查看退款详情" : isPriceJob ? "查看调价详情" : "查看促销活动详情"}
                   </Link>
                 </div>
               </section>

@@ -3,24 +3,33 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Alert, App as AntApp, Button, Form, Input, InputNumber, Modal, Select, Spin, Table } from "antd"
 import type { TableColumnsType } from "antd"
 import { useState } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 
 import { ApiError } from "../../api/client"
 import {
   applyInventoryMovementRequest,
+  cancelPriceChangeRequest,
+  submitPriceChangeRequest,
   useCatalogQuery,
   useInventoryMovementsQuery,
   useInventoryOverviewQuery,
+  usePriceChangeDetailQuery,
+  usePriceChangesQuery,
+  usePriceHistoriesQuery,
   type CatalogSku,
   type InventoryMovementItem,
   type InventoryMovementType,
   type InventoryMutationType,
+  type PriceChangeStatus,
+  type PriceChangeSummary,
+  type PriceHistoryItem,
 } from "../../api/queries"
 import type { ShopReadProps } from "../../auth"
 import styles from "./index.module.css"
 
 type CatalogPageProps = ShopReadProps & {
   shopRoles?: string[]
+  userId?: number
 }
 
 const pageSize = 6
@@ -41,6 +50,27 @@ const movementToneMap: Record<InventoryMovementType, string> = {
   fulfill: "pill",
   restock: "inventoryPill",
   adjust: "pill",
+}
+
+const priceChangeStatusLabels: Record<PriceChangeStatus, string> = {
+  pending_approval: "待审批",
+  approved: "已批准待执行",
+  processing: "执行中",
+  succeeded: "执行成功",
+  rejected: "已驳回",
+  cancelled: "已撤回",
+  failed: "复核失败",
+}
+
+const priceAuditLabels: Record<string, string> = {
+  "price_change.submitted": "提交调价申请",
+  "price_change.cancelled": "申请人撤回调价",
+  "approval.approved": "人工审批通过",
+  "approval.rejected": "人工审批驳回",
+  "price_change.succeeded": "复核通过并更新售价",
+  "price_change.execution_failed": "当前售价与审批快照不一致",
+  "job.dead_lettered": "后台任务进入死信队列",
+  "job.manual_retry": "人工按原操作重新投递",
 }
 
 const yuan = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -405,12 +435,383 @@ function InventoryWorkspace({
   )
 }
 
+function PriceStatusPill({ status }: { status: string }) {
+  const cls =
+    status === "succeeded"
+      ? styles.inventoryPill
+      : status === "failed" || status === "rejected"
+        ? styles.pillDanger
+        : status === "pending_approval" || status === "approved" || status === "processing"
+          ? styles.pillPending
+          : styles.pill
+  return <span className={cls}>{priceChangeStatusLabels[status as PriceChangeStatus] ?? status}</span>
+}
+
+const historyColumns: TableColumnsType<PriceHistoryItem> = [
+  {
+    title: "生效时间",
+    width: "20%",
+    dataIndex: "changed_at",
+    className: styles.number,
+    render: (value: string) => dateTime.format(new Date(value)),
+  },
+  {
+    title: "原价",
+    width: "14%",
+    dataIndex: "old_price",
+    align: "right",
+    className: styles.number,
+    render: (v: string) => `¥${yuan.format(Number(v))}`,
+  },
+  {
+    title: "新价",
+    width: "14%",
+    dataIndex: "new_price",
+    align: "right",
+    className: styles.number,
+    render: (v: string) => `¥${yuan.format(Number(v))}`,
+  },
+  {
+    title: "变更人",
+    width: "18%",
+    dataIndex: "actor_name",
+    render: (name: string | null) => name || "沙箱初始化",
+  },
+  {
+    title: "审批单 / 说明",
+    width: "34%",
+    render: (_, row) => (
+      <span className={styles.code}>
+        {row.approval_no ?? row.reason ?? "—"}
+      </span>
+    ),
+  },
+]
+
+const priceRequestColumns: TableColumnsType<PriceChangeSummary> = [
+  {
+    title: "申请单 / SKU",
+    width: "26%",
+    dataIndex: "request_no",
+    render: (no: string, row) => (
+      <div className={styles.productText}>
+        <strong>{no}</strong>
+        <span>{row.sku_code} · ¥{row.old_price} → ¥{row.new_price}</span>
+      </div>
+    ),
+  },
+  {
+    title: "调价原因",
+    width: "32%",
+    dataIndex: "reason",
+    ellipsis: true,
+  },
+  {
+    title: "状态",
+    width: "22%",
+    dataIndex: "status",
+    render: (status: string) => <PriceStatusPill status={status} />,
+  },
+  {
+    title: "操作",
+    width: "20%",
+    align: "right",
+    render: (_, row) => (
+      <Link className={styles.actionLink} to={`/catalog/price-changes/${row.id}`}>
+        {row.status === "failed" ? "查看原因" : "查看结果"}
+      </Link>
+    ),
+  },
+]
+
+function PricingWorkspace({
+  shopRoles = ["operator"],
+  catalogRows,
+  initialSku,
+  ...props
+}: CatalogPageProps & { catalogRows: CatalogSku[]; initialSku?: string }) {
+  const { message } = AntApp.useApp()
+  const queryClient = useQueryClient()
+  const [selectedSku, setSelectedSku] = useState(initialSku ?? "")
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [form] = Form.useForm<{ new_price: number; reason: string }>()
+
+  const activeSku = selectedSku && catalogRows.some(r => r.sku_code === selectedSku)
+    ? selectedSku
+    : catalogRows[0]?.sku_code ?? ""
+  const currentSkuObj = catalogRows.find(r => r.sku_code === activeSku) ?? null
+
+  const historiesQuery = usePriceHistoriesQuery(props, activeSku, true)
+  const requestsQuery = usePriceChangesQuery(props, activeSku, true)
+  const canOperate = shopRoles.includes("operator") || shopRoles.includes("admin")
+
+  async function handleSubmitPriceChange(values: { new_price: number; reason: string }) {
+    if (!currentSkuObj) return
+    setFormError(null)
+    setSubmitting(true)
+    try {
+      const idemKey = `prc-${props.shopId}-${currentSkuObj.sku_code}-${values.new_price.toFixed(2)}-${Date.now()}`
+      const res = await submitPriceChangeRequest(
+        props,
+        {
+          sku_code: currentSkuObj.sku_code,
+          new_price: values.new_price.toFixed(2),
+          reason: values.reason.trim(),
+        },
+        idemKey,
+      )
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "price-changes"] })
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "approvals"] })
+      form.resetFields()
+      message?.success?.(res.message)
+    } catch (error) {
+      setFormError(error instanceof ApiError ? error.message : "提交调价审批失败，请稍后重试。")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <section aria-labelledby="pricing-heading">
+      <div className={styles.inventoryToolbarRow}>
+        <div className={styles.sectionBar} style={{ flex: 1, marginBottom: 0 }}>
+          <h2 id="pricing-heading">调价记录与申请</h2>
+        </div>
+        <div className={styles.inventoryActions}>
+          <Select
+            className={styles.skuSelect}
+            aria-label="选择调价 SKU"
+            value={activeSku || undefined}
+            disabled={catalogRows.length === 0}
+            virtual={false}
+            options={catalogRows.map(item => ({
+              value: item.sku_code,
+              label: `${item.sku_code} · ${item.product_name}（¥${item.current_price}）`,
+            }))}
+            onChange={setSelectedSku}
+          />
+        </div>
+      </div>
+
+      <div className={styles.inventoryGrid}>
+        <div className={styles.sideStack}>
+          <div className={styles.panel}>
+            <div className={styles.toolbar}>
+              <strong className={styles.panelHeading}>价格历史</strong>
+              {historiesQuery.isSuccess && (
+                <span className={styles.shopCount}>共 {historiesQuery.data.length} 条记录</span>
+              )}
+            </div>
+            <Table<PriceHistoryItem>
+              className={styles.table}
+              rowKey="id"
+              columns={historyColumns}
+              pagination={false}
+              tableLayout="fixed"
+              dataSource={historiesQuery.isSuccess ? historiesQuery.data : []}
+              locale={{
+                emptyText: historiesQuery.isPending ? <Spin size="small" /> : "当前 SKU 暂无价格历史记录",
+              }}
+            />
+          </div>
+
+          <div className={styles.panel}>
+            <div className={styles.toolbar}>
+              <strong className={styles.panelHeading}>调价审批与执行记录</strong>
+              {requestsQuery.isSuccess && (
+                <span className={styles.shopCount}>共 {requestsQuery.data.length} 笔申请</span>
+              )}
+            </div>
+            <Table<PriceChangeSummary>
+              className={styles.table}
+              rowKey="id"
+              columns={priceRequestColumns}
+              pagination={false}
+              tableLayout="fixed"
+              dataSource={requestsQuery.isSuccess ? requestsQuery.data : []}
+              locale={{
+                emptyText: requestsQuery.isPending ? <Spin size="small" /> : "当前 SKU 暂无调价申请记录",
+              }}
+            />
+          </div>
+        </div>
+
+        <aside className={styles.sideStack}>
+          <section className={styles.sideCard} aria-labelledby="new-price-heading">
+            <div className={styles.detailHeader} style={{ marginBottom: 12 }}>
+              <h3 id="new-price-heading" style={{ margin: 0 }}>发起调价</h3>
+              <span className={styles.pillPending}>需要审批</span>
+            </div>
+            {currentSkuObj && (
+              <p className={styles.pricingFormHint}>
+                当前对象：{currentSkuObj.sku_code}（{currentSkuObj.product_name}），当前售价{" "}
+                <strong>¥{currentSkuObj.current_price}</strong>。提交后沿用统一审批流程，批准后重新复核 SKU 与售价。
+              </p>
+            )}
+            {formError && <Alert type="error" showIcon message={formError} style={{ marginBottom: 12 }} />}
+            {canOperate ? (
+              <Form form={form} layout="vertical" onFinish={values => { void handleSubmitPriceChange(values) }}>
+                <Form.Item label="拟调整售价（元）" name="new_price" rules={[{ required: true, message: "请输入目标售价" }]}>
+                  <InputNumber min={0.01} max={999999} step={1} precision={2} style={{ width: "100%" }} placeholder="例如 189.00" />
+                </Form.Item>
+                <Form.Item label="调价原因" name="reason" rules={[{ required: true, min: 2, message: "请填写调价原因" }]}>
+                  <Input placeholder="例如：调整冬季常规售价" maxLength={500} />
+                </Form.Item>
+                <Button type="primary" htmlType="submit" block loading={submitting} disabled={!currentSkuObj}>
+                  提交调价审批
+                </Button>
+              </Form>
+            ) : (
+              <Alert type="info" showIcon message="当前店铺角色仅支持只读查看调价历史。" />
+            )}
+          </section>
+        </aside>
+      </div>
+    </section>
+  )
+}
+
+function PriceChangeDetailView({
+  requestId,
+  shopRoles = ["operator"],
+  userId = 0,
+  ...props
+}: CatalogPageProps & { requestId: string }) {
+  const { message } = AntApp.useApp()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const valid = /^[1-9]\d{0,9}$/.test(requestId) && Number(requestId) <= 2_147_483_647
+  const query = usePriceChangeDetailQuery(props, requestId, valid)
+  const detail = query.isSuccess ? query.data : undefined
+  const [cancelling, setCancelling] = useState(false)
+
+  const canCancel = Boolean(
+    detail && detail.status === "pending_approval" && (detail.requester_id === userId || shopRoles.includes("admin")),
+  )
+
+  async function handleCancel() {
+    if (!detail) return
+    setCancelling(true)
+    try {
+      await cancelPriceChangeRequest(props, detail.id)
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "price-changes"] })
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "approvals"] })
+      message?.success?.("已撤回该调价审批申请")
+    } catch (error) {
+      message?.error?.(error instanceof ApiError ? error.message : "撤回调价失败，请重试。")
+    } finally {
+      setCancelling(false)
+    }
+  }
+
+  return (
+    <main className={styles.page}>
+      <nav className={styles.breadcrumb} aria-label="面包屑">
+        <Link to="/">运营工作台</Link><span aria-hidden="true">/</span>
+        <Link to="/catalog?tab=pricing">商品运营</Link><span aria-hidden="true">/</span>
+        <strong aria-current="page">{detail?.status === "failed" ? "调价复核失败" : "调价执行详情"}</strong>
+      </nav>
+      <div className={styles.detailHeader}>
+        <div>
+          <h1>{detail?.status === "failed" ? "调价复核失败" : "调价执行结果"}</h1>
+          <p className={styles.summary}>
+            {detail ? `${detail.sku_code} · ${detail.product_name} · ${detail.request_no}` : "查看调价审批快照、执行时间线与当前售价核对。"}
+          </p>
+        </div>
+        <div className={styles.headerActions}>
+          {detail && <PriceStatusPill status={detail.status} />}
+          <Link className={styles.backLink} to="/catalog?tab=pricing">返回调价记录</Link>
+        </div>
+      </div>
+
+      {!valid || !detail ? (
+        <div className={styles.feedback}>
+          <Spin size="small" /> 正在加载调价记录…
+        </div>
+      ) : (
+        <>
+          {detail.status === "failed" && detail.failure_reason && (
+            <Alert
+              type="error"
+              showIcon
+              message="调价复核失败"
+              description={detail.failure_reason}
+              style={{ marginBottom: 16 }}
+            />
+          )}
+          <div className={styles.inventoryGrid}>
+            <section className={styles.sideCard} aria-labelledby="price-timeline-heading">
+              <div className={styles.detailHeader} style={{ marginBottom: 12 }}>
+                <h2 id="price-timeline-heading" style={{ margin: 0, fontSize: 16 }}>执行时间线</h2>
+                <span className={styles.pill}>{detail.request_no}</span>
+              </div>
+              <ol className={styles.timeline}>
+                {detail.audit_logs.map(log => (
+                  <li key={log.id} className={styles.timelineItem}>
+                    <div>
+                      <strong>{priceAuditLabels[log.action] ?? log.action}</strong>
+                      <p>操作人：{log.actor_name}</p>
+                    </div>
+                    <span className={styles.timelineTime}>{dateTime.format(new Date(log.created_at))}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+
+            <aside className={styles.sideCard} aria-labelledby="price-step-heading">
+              <h2 id="price-step-heading" style={{ margin: "0 0 12px", fontSize: 16 }}>价格与下一步</h2>
+              <dl className={styles.priceFactList}>
+                <div><dt>原审批价</dt><dd>¥{detail.old_price}</dd></div>
+                <div><dt>拟调整售价</dt><dd>¥{detail.new_price}</dd></div>
+                <div><dt>当前实时售价</dt><dd>¥{detail.current_price}</dd></div>
+                <div><dt>价格流水</dt><dd>{detail.status === "succeeded" ? "已追加历史记录" : "未新增本次价格变更"}</dd></div>
+              </dl>
+              <div className={styles.headerActions} style={{ marginTop: 14, flexWrap: "wrap" }}>
+                {detail.status === "failed" && (
+                  <Button
+                    type="primary"
+                    onClick={() => navigate(`/catalog?tab=pricing&sku=${detail.sku_code}`)}
+                  >
+                    按最新售价重新发起
+                  </Button>
+                )}
+                {canCancel && (
+                  <Button loading={cancelling} onClick={() => { void handleCancel() }}>
+                    撤回调价申请
+                  </Button>
+                )}
+                {detail.approval_id && (
+                  <Link className={styles.backLink} to={`/approvals/${detail.approval_id}`}>查看审批单</Link>
+                )}
+                {detail.job_id && (
+                  <Link className={styles.backLink} to={`/tasks/${detail.job_id}`}>查看执行任务</Link>
+                )}
+              </div>
+            </aside>
+          </div>
+        </>
+      )}
+    </main>
+  )
+}
+
 export default function CatalogPage(props: CatalogPageProps) {
+  const { requestId } = useParams()
+  if (requestId !== undefined) {
+    return <PriceChangeDetailView key={`${props.shopId}/prc/${requestId}`} requestId={requestId} {...props} />
+  }
+  return <CatalogWorkspace key={props.shopId} {...props} />
+}
+
+function CatalogWorkspace(props: CatalogPageProps) {
   const { onSignIn } = props
   const [searchParams] = useSearchParams()
-  const initialTab = searchParams.get("tab") === "inventory" ? "inventory" : "overview"
+  const tabParam = searchParams.get("tab")
+  const initialTab: "overview" | "inventory" | "pricing" =
+    tabParam === "inventory" ? "inventory" : tabParam === "pricing" ? "pricing" : "overview"
   const initialSku = searchParams.get("sku") ?? undefined
-  const [activeTab, setActiveTab] = useState<"overview" | "inventory">(initialTab)
+  const [activeTab, setActiveTab] = useState<"overview" | "inventory" | "pricing">(initialTab)
   const query = useCatalogQuery(props)
   const [search, setSearch] = useState("")
   const [category, setCategory] = useState<string>()
@@ -486,10 +887,21 @@ export default function CatalogPage(props: CatalogPageProps) {
         >
           库存与流水
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "pricing"}
+          className={`${styles.viewTab} ${activeTab === "pricing" ? styles.viewTabActive : ""}`}
+          onClick={() => setActiveTab("pricing")}
+        >
+          调价记录
+        </button>
       </div>
 
       {activeTab === "inventory" ? (
         <InventoryWorkspace {...props} initialSku={initialSku} />
+      ) : activeTab === "pricing" ? (
+        <PricingWorkspace {...props} catalogRows={rows} initialSku={initialSku} />
       ) : (
         <section aria-labelledby="catalog-heading">
           <div className={styles.sectionBar}><h2 id="catalog-heading">商品 / SKU</h2></div>

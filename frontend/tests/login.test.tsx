@@ -67,10 +67,13 @@ describe("AppRouter", () => {
   })
 
   it("logs in, returns to the requested route, and logs out", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(null, { status: 401 }))
-      .mockResolvedValueOnce(Response.json(session))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+      if (url === "/api/auth/refresh") return Promise.resolve(new Response(null, { status: 401 }))
+      if (url === "/api/auth/login") return Promise.resolve(Response.json(session))
+      if (url === "/api/auth/logout") return Promise.resolve(new Response(null, { status: 204 }))
+      return Promise.resolve(new Response(null, { status: 404 }))
+    })
     vi.stubGlobal("fetch", fetchMock)
     window.history.replaceState(null, "", "/analytics")
     render(<AppRouter />)
@@ -89,7 +92,7 @@ describe("AppRouter", () => {
     fireEvent.click(screen.getByRole("button", { name: "退出登录" }))
 
     expect(await screen.findByRole("heading", { name: "登录工作台" })).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/auth/logout", expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/logout", expect.objectContaining({
       method: "POST", headers: { Authorization: "Bearer test-token" },
     }))
     expect(window.location.pathname).toBe("/login")

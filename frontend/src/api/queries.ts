@@ -312,7 +312,12 @@ export type ApprovalDecisionResponse = {
 }
 
 export type JobStatus = "pending" | "running" | "succeeded" | "retrying" | "failed" | "dead_lettered"
-export type JobType = "promotion_schedule" | "promotion_activate" | "promotion_complete" | "refund_execute"
+export type JobType =
+  | "promotion_schedule"
+  | "promotion_activate"
+  | "promotion_complete"
+  | "refund_execute"
+  | "price_change_execute"
 export type JobTab = "all" | "needs_attention" | "completed"
 
 export type JobSummary = {
@@ -350,7 +355,211 @@ export type JobRetryResponse = {
   message: string
 }
 
-export type NotificationCategory = "approval" | "promotion" | "job" | "refund"
+export type NotificationCategory = "approval" | "promotion" | "job" | "refund" | "price_change"
+
+export type PriceChangeStatus =
+  | "pending_approval"
+  | "approved"
+  | "processing"
+  | "succeeded"
+  | "rejected"
+  | "cancelled"
+  | "failed"
+
+export type PriceHistoryItem = {
+  id: number
+  sku_id: number
+  sku_code: string
+  product_name: string
+  old_price: string
+  new_price: string
+  changed_at: string
+  actor_id: number | null
+  actor_name: string | null
+  approval_no: string | null
+  price_change_request_id: number | null
+  reason: string | null
+}
+
+export type PriceChangeSummary = {
+  id: number
+  request_no: string
+  sku_id: number
+  sku_code: string
+  product_name: string
+  old_price: string
+  new_price: string
+  cost_price: string
+  reason: string
+  status: PriceChangeStatus
+  requester_id: number
+  requester_name: string
+  failure_reason: string | null
+  executed_at: string | null
+  approval_id: number | null
+  approval_no: string | null
+  approval_status: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type PriceChangeDetail = PriceChangeSummary & {
+  current_price: string
+  sku_status: string
+  job_id: number | null
+  job_no: string | null
+  job_status: string | null
+  audit_logs: AuditLogEntry[]
+}
+
+export type PriceChangeSubmitResponse = {
+  request_id: number
+  request_no: string
+  sku_code: string
+  old_price: string
+  new_price: string
+  status: PriceChangeStatus
+  approval_id: number
+  approval_no: string
+  approval_status: string
+  replayed: boolean
+  message: string
+}
+
+export type AnalyticsTrendPoint = {
+  date_label: string
+  full_date: string
+  current_gmv: string
+  previous_gmv: string
+  current_orders: number
+  previous_orders: number
+}
+
+export type AnalyticsSkuRankItem = {
+  sku_code: string
+  product_name: string
+  units_sold: number
+  paid_gmv: string
+}
+
+export type AnalyticsOverviewResponse = {
+  shop_id: number
+  shop_name: string
+  timezone: string
+  days: number
+  start_date: string
+  end_date: string
+  prev_start_date: string
+  prev_end_date: string
+  paid_gmv: string
+  prev_paid_gmv: string
+  gmv_change_pct: string | null
+  paid_orders: number
+  prev_paid_orders: number
+  avg_order_value: string
+  prev_avg_order_value: string
+  refunded_orders: number
+  refund_rate: string
+  prev_refund_rate: string
+  trend: AnalyticsTrendPoint[]
+  sku_ranking: AnalyticsSkuRankItem[]
+  methodology: string
+}
+
+export type DailyReportResponse = {
+  shop_id: number
+  shop_name: string
+  metrics: {
+    report_date: string
+    prev_date: string
+    timezone: string
+    paid_gmv: string
+    prev_paid_gmv: string
+    gmv_delta: string
+    gmv_change_pct: string | null
+    paid_orders: number
+    avg_order_value: string
+    refunded_orders: number
+    refunded_amount: string
+    refund_rate: string
+  }
+  headline: string
+  facts: string[]
+  analysis_boundary: string
+  recommendations: string[]
+  methodology: string
+}
+
+export type SkuTurnoverItem = {
+  sku_code: string
+  product_name: string
+  category: string
+  units_sold: number
+  available_qty: number
+  reserved_qty: number
+  turnover_rate: string
+  low_stock: boolean
+  low_stock_threshold: number
+}
+
+export type AnalyticsAnomalyItem = {
+  kind: "low_stock" | "refund_rate"
+  title: string
+  detail: string
+  badge: string
+  severity: "warning" | "info"
+}
+
+export type InventoryTurnoverResponse = {
+  shop_id: number
+  shop_name: string
+  timezone: string
+  days: number
+  start_date: string
+  end_date: string
+  total_units_sold: number
+  total_available_qty: number
+  overall_turnover_rate: string
+  low_stock_count: number
+  low_stock_threshold: number
+  items: SkuTurnoverItem[]
+  anomalies: AnalyticsAnomalyItem[]
+  methodology: string
+}
+
+export type PromotionReviewDayPoint = {
+  day_label: string
+  promo_date: string
+  baseline_date: string
+  promo_units: number
+  baseline_units: number
+  promo_gmv: string
+  baseline_gmv: string
+}
+
+export type PromotionReviewResponse = {
+  promotion_id: number
+  promotion_no: string
+  promotion_name: string
+  status: string
+  sku_codes: string[]
+  timezone: string
+  starts_at: string
+  ends_at: string
+  promo_start_date: string
+  promo_end_date: string
+  baseline_start_date: string
+  baseline_end_date: string
+  duration_days: number
+  promo_units: number
+  promo_gmv: string
+  baseline_units: number
+  baseline_gmv: string
+  units_change_pct: string | null
+  daily_comparison: PromotionReviewDayPoint[]
+  methodology: string
+  review_note: string
+}
 
 export type NotificationItem = {
   id: number
@@ -371,6 +580,75 @@ export type NotificationListResponse = {
 
 export type ReadAllResponse = {
   updated_count: number
+}
+
+export type VisibilityScope = "org_all" | "org_operator" | "shop_operator" | "approver_only" | "admin_only"
+export type KnowledgeStatus = "pending" | "indexing" | "indexed" | "failed"
+
+export type KnowledgeChunkPreview = {
+  chunk_id: number
+  chunk_index: number
+  section_title: string
+  page_label: string
+  content: string
+  has_embedding: boolean
+}
+
+export type KnowledgeDocumentSummary = {
+  id: number
+  doc_no: string
+  title: string
+  version: number
+  is_current: boolean
+  shop_id: number | null
+  visibility_scope: VisibilityScope
+  visibility_label: string
+  allowed_roles: string[]
+  status: KnowledgeStatus
+  embedding_model: string | null
+  embedding_dim: number | null
+  chunk_count: number
+  last_error: string | null
+  preview_section: string | null
+  preview_page_label: string | null
+  preview_excerpt: string | null
+  indexed_at: string | null
+  updated_at: string
+}
+
+export type KnowledgeDocumentDetail = KnowledgeDocumentSummary & {
+  raw_content: string
+  chunks: KnowledgeChunkPreview[]
+}
+
+export type KnowledgeCitationItem = {
+  document_id: number
+  doc_no: string
+  title: string
+  document_version: number
+  chunk_id: number
+  chunk_index: number
+  section_title: string
+  page_label: string
+  visibility_scope: VisibilityScope
+  visibility_label: string
+  excerpt: string
+  content: string
+  vector_rank: number | null
+  lexical_rank: number | null
+  rrf_score: number
+  rerank_score: number | null
+}
+
+export type KnowledgeSearchResponse = {
+  query: string
+  items: KnowledgeCitationItem[]
+  vector_candidates: number
+  lexical_candidates: number
+  vector_degraded: boolean
+  rerank_degraded: boolean
+  embedding_model: string
+  rerank_model: string | null
 }
 
 export function createQueryClient() {
@@ -579,4 +857,128 @@ export function markNotificationReadRequest(auth: ShopReadProps, notificationId:
 
 export function markAllNotificationsReadRequest(auth: ShopReadProps) {
   return fetchShopJson<ReadAllResponse>("notifications/read-all", auth, { payload: {} })
+}
+
+export function usePriceHistoriesQuery(auth: ShopReadProps, skuCode: string, enabled: boolean) {
+  const path = skuCode ? `price-changes/histories?sku_code=${encodeURIComponent(skuCode)}` : "price-changes/histories"
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "price-changes", "histories", skuCode],
+    queryFn: ({ signal }) => fetchShopJson<PriceHistoryItem[]>(path, auth, { signal }),
+    enabled,
+  })
+}
+
+export function usePriceChangesQuery(auth: ShopReadProps, skuCode: string, enabled: boolean) {
+  const path = skuCode ? `price-changes?sku_code=${encodeURIComponent(skuCode)}` : "price-changes"
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "price-changes", "list", skuCode],
+    queryFn: ({ signal }) => fetchShopJson<PriceChangeSummary[]>(path, auth, { signal }),
+    enabled,
+  })
+}
+
+export function usePriceChangeDetailQuery(auth: ShopReadProps, requestId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "price-changes", "detail", requestId],
+    queryFn: ({ signal }) => fetchShopJson<PriceChangeDetail>(`price-changes/${requestId}`, auth, { signal }),
+    enabled,
+  })
+}
+
+export function submitPriceChangeRequest(
+  auth: ShopReadProps,
+  payload: { sku_code: string; new_price: string; reason: string },
+  idempotencyKey?: string,
+) {
+  return fetchShopJson<PriceChangeSubmitResponse>("price-changes", auth, { payload, idempotencyKey })
+}
+
+export function cancelPriceChangeRequest(auth: ShopReadProps, requestId: number) {
+  return fetchShopJson<PriceChangeDetail>(`price-changes/${requestId}/cancel`, auth, { payload: {} })
+}
+
+export function useAnalyticsOverviewQuery(auth: ShopReadProps, days: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "analytics", "overview", days],
+    queryFn: ({ signal }) => fetchShopJson<AnalyticsOverviewResponse>(`analytics/overview?days=${days}`, auth, { signal }),
+    enabled,
+  })
+}
+
+export function useDailyReportQuery(auth: ShopReadProps, enabled: boolean, reportDate = "") {
+  const path = reportDate
+    ? `analytics/daily-report?report_date=${encodeURIComponent(reportDate)}`
+    : "analytics/daily-report"
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "analytics", "daily-report", reportDate],
+    queryFn: ({ signal }) => fetchShopJson<DailyReportResponse>(path, auth, { signal }),
+    enabled,
+  })
+}
+
+export function useInventoryTurnoverQuery(auth: ShopReadProps, days: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "analytics", "inventory-turnover", days],
+    queryFn: ({ signal }) =>
+      fetchShopJson<InventoryTurnoverResponse>(`analytics/inventory-turnover?days=${days}`, auth, { signal }),
+    enabled,
+  })
+}
+
+export function usePromotionReviewQuery(auth: ShopReadProps, promotionId: number | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "promotions", "review", promotionId],
+    queryFn: ({ signal }) => fetchShopJson<PromotionReviewResponse>(`promotions/${promotionId}/review`, auth, { signal }),
+    enabled: Boolean(enabled && promotionId),
+  })
+}
+
+export function useKnowledgeDocumentsQuery(auth: ShopReadProps, keyword = "", status = "all") {
+  const params = new URLSearchParams()
+  if (keyword.trim()) params.set("keyword", keyword.trim())
+  if (status && status !== "all") params.set("status", status)
+  const path = params.toString() ? `knowledge/documents?${params.toString()}` : "knowledge/documents"
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "knowledge", "documents", keyword, status],
+    queryFn: ({ signal }) => fetchShopJson<KnowledgeDocumentSummary[]>(path, auth, { signal }),
+  })
+}
+
+export function useKnowledgeDocumentDetailQuery(
+  auth: ShopReadProps,
+  documentId: number | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["shop", auth.shopId, "knowledge", "detail", documentId],
+    queryFn: ({ signal }) =>
+      fetchShopJson<KnowledgeDocumentDetail>(`knowledge/documents/${documentId}`, auth, { signal }),
+    enabled: Boolean(enabled && documentId),
+  })
+}
+
+export function createKnowledgeDocumentRequest(
+  auth: ShopReadProps,
+  payload: {
+    doc_no?: string
+    title: string
+    visibility_scope: VisibilityScope
+    shop_only?: boolean
+    raw_content: string
+  },
+) {
+  return fetchShopJson<KnowledgeDocumentDetail>("knowledge/documents", auth, { payload })
+}
+
+export function reindexKnowledgeDocumentRequest(auth: ShopReadProps, documentId: number) {
+  return fetchShopJson<KnowledgeDocumentDetail>(`knowledge/documents/${documentId}/reindex`, auth, {
+    payload: {},
+  })
+}
+
+export function searchKnowledgeRequest(
+  auth: ShopReadProps,
+  payload: { query: string; top_n?: number },
+) {
+  return fetchShopJson<KnowledgeSearchResponse>("knowledge/search", auth, { payload })
 }

@@ -386,3 +386,154 @@
 .backLink:hover {
   border-color: #000000;
 }
+
+.viewTabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e4e4e7;
+  padding-bottom: 12px;
+}
+
+.viewTab {
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  background: transparent;
+  color: #52525b;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.viewTab:hover {
+  color: #000000;
+  border-color: #e4e4e7;
+}
+
+.viewTabActive {
+  background: #000000;
+  color: #ffffff;
+}
+
+.viewTabActive:hover {
+  background: #000000;
+  color: #ffffff;
+}
+
+.calendarGridWrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.calendarHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e4e4e7;
+}
+
+.calendarWeekRow {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-bottom: 1px solid #e4e4e7;
+  background: #fbfbf5;
+}
+
+.calendarWeekRow span {
+  padding: 8px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: #52525b;
+}
+
+.calendarDays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.calendarCell {
+  min-height: 92px;
+  padding: 8px;
+  border-right: 1px solid #f4f4f5;
+  border-bottom: 1px solid #f4f4f5;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 0;
+  border-left: 0;
+}
+
+.calendarCell:hover {
+  background: #fbfbf5;
+}
+
+.calendarCellOutside {
+  color: #a1a1aa;
+  background: #fafafa;
+}
+
+.calendarCellSelected {
+  outline: 2px solid #000000;
+  outline-offset: -2px;
+}
+
+.calendarDayNum {
+  font-size: 13px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendarEventTag {
+  display: block;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: #d4f9e0;
+  color: #164b36;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendarEventMuted {
+  background: #f4f4f5;
+  color: #52525b;
+}
+
+.factMetaList {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.factMetaList dt {
+  color: #71717a;
+  font-size: 12px;
+}
+
+.factMetaList dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  font-weight: 550;
+  color: #000000;
+  font-variant-numeric: tabular-nums;
+}
+
+.speculateBox {
+  padding: 10px 12px;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  background: #fbfbf5;
+  color: #52525b;
+  font-size: 13px;
+  line-height: 1.5;
+}

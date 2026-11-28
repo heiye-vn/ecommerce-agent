@@ -403,3 +403,130 @@
   line-height: 20px;
   white-space: nowrap;
 }
+
+.pillDanger {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 9999px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.detailHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.backLink,
+.actionLink {
+  color: #000;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border: 1px solid #d4d4d8;
+  border-radius: 9999px;
+  background: #fff;
+  text-decoration: none;
+}
+
+.backLink:hover {
+  border-color: #000;
+}
+
+.pricingFormHint {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  background: #fbfbf5;
+  color: #52525b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.timelineItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f4f4f5;
+}
+
+.timelineItem:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.timelineItem p {
+  margin: 2px 0 0;
+  color: #52525b;
+  font-size: 12px;
+}
+
+.timelineTime {
+  color: #71717a;
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.priceFactList {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.priceFactList div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f4f4f5;
+}
+
+.priceFactList div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.priceFactList dt {
+  color: #52525b;
+  font-size: 13px;
+}
+
+.priceFactList dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

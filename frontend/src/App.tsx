@@ -2,6 +2,7 @@ import { App as AntApp, Button, Select, Space, Typography } from "antd"
 import {
   AppstoreOutlined,
   BellOutlined,
+  BookOutlined,
   FileSearchOutlined,
   LineChartOutlined,
   SafetyCertificateOutlined,
@@ -23,6 +24,7 @@ const navigationItems = [
   { key: "analytics", label: "经营分析", to: "/analytics", group: "业务" },
   { key: "approvals", label: "审批中心", to: "/approvals", group: "系统管理" },
   { key: "tasks", label: "任务中心", to: "/tasks", group: "系统管理" },
+  { key: "knowledge", label: "知识库管理", to: "/knowledge", group: "系统管理" },
 ]
 
 type AppProps = {
@@ -69,6 +71,7 @@ export default function App({
     if (key === "orders") return <FileSearchOutlined />
     if (key === "approvals") return <SafetyCertificateOutlined />
     if (key === "tasks") return <ScheduleOutlined />
+    if (key === "knowledge") return <BookOutlined />
     return <LineChartOutlined />
   }
 

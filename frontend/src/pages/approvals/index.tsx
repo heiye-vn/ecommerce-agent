@@ -264,6 +264,8 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
           : await rejectApprovalRequest(props, detail.id, comment.trim())
       await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "approvals"] })
       await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "promotions"] })
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "price-changes"] })
+      await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "catalog"] })
       await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "refunds"] })
       await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "orders"] })
       await queryClient.invalidateQueries({ queryKey: ["shop", props.shopId, "jobs"] })
@@ -295,6 +297,7 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
   }
 
   const isRefund = detail?.resource_type === "refund"
+  const isPriceChange = detail?.resource_type === "price_change"
   const snap = detail?.payload_snapshot ?? {}
   const startsAt = typeof snap.starts_at === "string" ? snap.starts_at : ""
   const endsAt = typeof snap.ends_at === "string" ? snap.ends_at : ""
@@ -303,7 +306,9 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
   const resourceLink = detail
     ? isRefund
       ? { to: `/orders/refunds/${detail.resource_id}`, label: "查看退款详情" }
-      : { to: `/promotions/${detail.resource_id}`, label: "查看活动详情" }
+      : isPriceChange
+        ? { to: `/catalog/price-changes/${detail.resource_id}`, label: "查看调价详情" }
+        : { to: `/promotions/${detail.resource_id}`, label: "查看活动详情" }
     : null
 
   return (
@@ -311,11 +316,13 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
       <nav className={styles.breadcrumb} aria-label="面包屑">
         <Link to="/">运营工作台</Link><span aria-hidden="true">/</span>
         <Link to="/approvals">审批中心</Link><span aria-hidden="true">/</span>
-        <strong aria-current="page">{isRefund ? "审阅退款申请" : "审阅促销方案"}</strong>
+        <strong aria-current="page">
+          {isRefund ? "审阅退款申请" : isPriceChange ? "审阅调价申请" : "审阅促销方案"}
+        </strong>
       </nav>
       <div className={styles.headerBar}>
         <div>
-          <h1>{isRefund ? "审阅退款申请" : "审阅促销方案"}</h1>
+          <h1>{isRefund ? "审阅退款申请" : isPriceChange ? "审阅调价申请" : "审阅促销方案"}</h1>
           <p className={styles.summary}>
             {detail ? `${detail.approval_no} · ${detail.resource_name} · ${detail.resource_no}` : "核对不可变审批参数快照与业务依据。"}
           </p>
@@ -340,7 +347,9 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
           <div className={styles.stack}>
             <section className={styles.card} aria-labelledby="snapshot-heading">
               <div className={styles.cardHeader}>
-                <h2 id="snapshot-heading">{isRefund ? "退款参数快照" : "审批参数快照"}</h2>
+                <h2 id="snapshot-heading">
+                  {isRefund ? "退款参数快照" : isPriceChange ? "调价参数快照" : "审批参数快照"}
+                </h2>
                 <span className={styles.pill}>不可变快照</span>
               </div>
 
@@ -367,6 +376,38 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
                     <div><dt>关联订单</dt><dd>{String(snap.order_no ?? "—")}</dd></div>
                     <div><dt>退款原因</dt><dd>{String(snap.reason ?? "—")}</dd></div>
                     <div><dt>店铺</dt><dd>{detail.shop_name}</dd></div>
+                    <div><dt>申请人</dt><dd>{detail.requester_name}</dd></div>
+                    <div><dt>提交时间</dt><dd>{dateTime.format(new Date(detail.created_at))}</dd></div>
+                  </dl>
+                </>
+              ) : isPriceChange ? (
+                <>
+                  <div className={styles.snapshotBand}>
+                    <div>
+                      <span>拟调整售价</span>
+                      <div className={styles.priceRow}>
+                        <strong>¥{String(snap.new_price ?? detail.snapshot_amount ?? "—")}</strong>
+                        {snap.old_price ? <span className={styles.strikePrice}>¥{String(snap.old_price)}</span> : null}
+                        {snap.change_pct !== undefined ? (
+                          <span className={styles.discountTag}>
+                            {Number(snap.change_pct) >= 0 ? "+" : ""}{String(snap.change_pct)}%
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div>
+                      <span>适用 SKU</span>
+                      <p className={styles.windowValue}>{String(snap.sku_code ?? detail.sku_code ?? "—")}</p>
+                      <p className={styles.windowNote}>
+                        {String(snap.product_name ?? "")} · 提交时原价 ¥{String(snap.old_price ?? "—")}
+                      </p>
+                    </div>
+                  </div>
+                  <dl className={styles.specGrid}>
+                    <div><dt>调价申请单</dt><dd>{detail.resource_no}</dd></div>
+                    <div><dt>调价原因</dt><dd>{String(snap.reason ?? "—")}</dd></div>
+                    <div><dt>店铺</dt><dd>{detail.shop_name}</dd></div>
+                    <div><dt>商品成本价</dt><dd>¥{String(snap.cost_price ?? "—")}</dd></div>
                     <div><dt>申请人</dt><dd>{detail.requester_name}</dd></div>
                     <div><dt>提交时间</dt><dd>{dateTime.format(new Date(detail.created_at))}</dd></div>
                   </dl>
@@ -438,7 +479,7 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
                 <Alert
                   type="warning"
                   showIcon
-                  message={isRefund ? "退款执行复核结果" : "排期复核结果"}
+                  message={isRefund ? "退款执行复核结果" : isPriceChange ? "调价执行复核结果" : "排期复核结果"}
                   description={detail.resource_failure_reason}
                   style={{ marginBottom: 12 }}
                 />
@@ -462,7 +503,7 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
                       loading={submitting === "approve"}
                       onClick={() => { void handleDecision("approve") }}
                     >
-                      {isRefund ? "批准退款申请" : "批准此版本"}
+                      {isRefund ? "批准退款申请" : isPriceChange ? "批准调价申请" : "批准此版本"}
                     </Button>
                     <Button
                       disabled={!detail.can_decide || submitting !== null}
@@ -487,7 +528,9 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
           <aside className={styles.stack}>
             <section className={styles.card} aria-labelledby="evidence-heading">
               <div className={styles.cardHeader}>
-                <h2 id="evidence-heading">{isRefund ? "资格与余额依据" : "数据依据"}</h2>
+                <h2 id="evidence-heading">
+                  {isRefund ? "资格与余额依据" : isPriceChange ? "价格与成本依据" : "数据依据"}
+                </h2>
                 <span className={`${styles.pill} ${styles.pillMint}`}>数据库事实</span>
               </div>
               {isRefund ? (
@@ -496,6 +539,13 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
                   <div><dt>提交时已成功退款</dt><dd>¥{String(snap.refunded_amount ?? "0.00")}</dd></div>
                   <div><dt>提交时可退上限</dt><dd>¥{String(snap.refundable_amount ?? "—")}</dd></div>
                   <div><dt>当前退款单状态</dt><dd>{detail.resource_status ?? "—"}</dd></div>
+                </dl>
+              ) : isPriceChange ? (
+                <dl className={styles.factList}>
+                  <div><dt>提交时原售价</dt><dd>¥{String(snap.old_price ?? "—")}</dd></div>
+                  <div><dt>商品成本价</dt><dd>¥{String(snap.cost_price ?? "—")}</dd></div>
+                  <div><dt>拟调整售价</dt><dd>¥{String(snap.new_price ?? "—")}</dd></div>
+                  <div><dt>当前调价单状态</dt><dd>{detail.resource_status ?? "—"}</dd></div>
                 </dl>
               ) : (
                 <dl className={styles.factList}>
@@ -537,7 +587,9 @@ function ApprovalDetailView({ approvalId, ...props }: PageProps & { approvalId: 
               <div className={styles.boundaryNote}>
                 {isRefund
                   ? "批准并不等于资金已退回。后台任务在沙箱执行前会锁定订单行，重新复核支付状态、剩余可退余额与重复退款防护。"
-                  : `批准仅授权当前版本（V${detail.resource_version}），后端在排期前会锁定目标 SKU 并重新复核最新售价、可售库存、商品状态与时段冲突。`}
+                  : isPriceChange
+                    ? "批准并不等于立即改价。后台任务执行前会锁定 SKU 行并二次复核在售状态、成本价与审批时的原售价；若原售价已变化，本次调价将被安全拦截。"
+                    : `批准仅授权当前版本（V${detail.resource_version}），后端在排期前会锁定目标 SKU 并重新复核最新售价、可售库存、商品状态与时段冲突。`}
               </div>
             </section>
           </aside>
