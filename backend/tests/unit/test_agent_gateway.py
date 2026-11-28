@@ -4,6 +4,7 @@ import pytest
 
 from app.agent import llm_gateway
 from app.core.config import AppSettings
+from app.schemas.knowledge import KnowledgeCitationItem
 
 
 @pytest.mark.asyncio
@@ -46,6 +47,8 @@ async def test_agent_uses_only_the_selected_chat_channel(provider, monkeypatch):
         "refund_amount": None,
         "refund_reason": None,
         "exception_only": False,
+        "target_price": None,
+        "price_change_reason": None,
     }
 
 
@@ -90,4 +93,69 @@ async def test_agent_supports_channel_structured_mode_and_metadata(monkeypatch):
     assert first.intent.discount == Decimal("8")
     assert first.intent.duration_days == 3
     assert second.intent.start_date == "2026-11-22"
+    llm_gateway.clear_client_cache()
+
+
+@pytest.mark.asyncio
+async def test_gateway_supports_knowledge_qa_intent_and_answer_synthesis(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "dashscope")
+    monkeypatch.setenv("DASHSCOPE_BASE_URL", "https://dashscope.example.invalid/v1")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dash-key")
+    monkeypatch.setenv("DASHSCOPE_DEFAULT_MODEL", "qwen-plus")
+    llm_gateway.clear_client_cache()
+
+    class ProviderStub:
+        def __init__(self, **_kwargs):
+            pass
+
+        def with_structured_output(self, _schema, *, method):
+            assert method == "function_calling"
+            return self
+
+        async def ainvoke(self, messages):
+            if len(messages) == 2 and "问题：" in messages[1][1]:
+                return type("Msg", (), {"content": "不能按原方案排期，需重新提交审批。"})()
+            return {"kind": "knowledge_qa"}
+
+    monkeypatch.setattr(llm_gateway, "ChatOpenAI", ProviderStub)
+    settings = AppSettings.load()
+    result = await llm_gateway.classify_with_metadata(
+        "审批通过后如果 SKU 售价变了，还能按原方案排期吗？",
+        settings=settings,
+    )
+    assert result.intent.kind == "knowledge_qa"
+
+    citation = KnowledgeCitationItem(
+        document_id=1,
+        doc_no="DOC-001",
+        title="促销运营规则",
+        document_version=3,
+        chunk_id=2,
+        chunk_index=1,
+        section_title="§4.3 审批后复核",
+        page_label="第 6 页",
+        visibility_scope="org_operator",
+        visibility_label="组织运营",
+        excerpt="价格与审批快照不一致时不得排期。",
+        content="价格与审批快照不一致时不得排期。",
+        rrf_score=0.032,
+    )
+    synthesized = await llm_gateway.synthesize_knowledge_answer(
+        "审批通过后如果 SKU 售价变了，还能按原方案排期吗？",
+        [citation],
+        settings=settings,
+    )
+    assert "不能按原方案排期" in synthesized
+
+    monkeypatch.setenv("LLM_PROVIDER", "unsupported_channel")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "")
+    monkeypatch.setenv("OPENAI_RELAY_API_KEY", "")
+    llm_gateway.clear_client_cache()
+    fallback = await llm_gateway.synthesize_knowledge_answer(
+        "价格变了怎么办？",
+        [citation],
+        settings=AppSettings.load(),
+    )
+    assert "DOC-001" in fallback
+    assert "§4.3 审批后复核" in fallback
     llm_gateway.clear_client_cache()

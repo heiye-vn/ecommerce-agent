@@ -1,6 +1,6 @@
 import re
 from datetime import date
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
@@ -8,26 +8,34 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.llm_gateway import classify as _gateway_classify
 from app.agent.llm_gateway import classify_with_metadata
+from app.agent.llm_gateway import synthesize_knowledge_answer as _gateway_synthesize_knowledge_answer
 from app.agent.tools import (
     ToolCallRecord,
+    preview_price_change_tool,
     preview_promotion_tool,
     preview_refund_tool,
     query_order_tool,
     query_sales_tool,
+    search_knowledge_tool,
+    submit_price_change_approval_tool,
     submit_promotion_approval_tool,
     submit_refund_approval_tool,
 )
 from app.core.config import AppSettings
+from app.models.org import Role
 from app.schemas.agent import (
     ORDER_NO_PATTERN,
     SKU_PATTERN,
     AgentAnswer,
+    PendingPriceChangePlan,
     PendingPromotionPlan,
     PendingRefundPlan,
+    PriceChangeContext,
     PromotionContext,
     QueryIntent,
     RefundContext,
 )
+from app.services.price_change_preview import parse_price_change_reason, parse_target_price
 from app.services.promotion_preview import (
     is_confirm_message,
     parse_terms,
@@ -37,6 +45,7 @@ from app.services.refund_preview import parse_refund_amount, parse_refund_reason
 
 # 保留模块级引用，兼容测试通过 monkeypatch.setattr(graph, "classify", ...) 注入意图桩
 classify = _gateway_classify
+synthesize_knowledge_answer = _gateway_synthesize_knowledge_answer
 
 
 class QueryState(TypedDict, total=False):
@@ -45,6 +54,8 @@ class QueryState(TypedDict, total=False):
     pending_plan: PendingPromotionPlan | None
     prior_refund_context: RefundContext | None
     pending_refund_plan: PendingRefundPlan | None
+    prior_price_change_context: PriceChangeContext | None
+    pending_price_change_plan: PendingPriceChangePlan | None
     intent: QueryIntent
     llm_provider: str | None
     model_name: str | None
@@ -59,6 +70,7 @@ class QueryContext(TypedDict):
     shop_name: str
     timezone_name: str
     actor_id: int
+    actor_roles: NotRequired[list[Role]]
     session_id: int | None
     business_day: date
     session_factory: async_sessionmaker[AsyncSession]
@@ -66,13 +78,20 @@ class QueryContext(TypedDict):
 
 
 def route_entry(state: QueryState) -> str:
+    pending_price_change = state.get("pending_price_change_plan")
     pending_refund = state.get("pending_refund_plan")
     pending_promo = state.get("pending_plan")
-    if (pending_refund is not None or pending_promo is not None) and is_confirm_message(state["message"]):
+    if (
+        pending_price_change is not None
+        or pending_refund is not None
+        or pending_promo is not None
+    ) and is_confirm_message(state["message"]):
         return "confirm_active_plan"
     has_new_entity = bool(
         SKU_PATTERN.search(state["message"]) or ORDER_NO_PATTERN.search(state["message"])
     )
+    if state.get("prior_price_change_context") is not None and not has_new_entity:
+        return "follow_up_price_change"
     if state.get("prior_refund_context") is not None and not has_new_entity:
         return "follow_up_refund"
     if state.get("prior_context") is not None and not has_new_entity:
@@ -201,7 +220,71 @@ async def _submit_pending_refund_plan(
     }
 
 
+async def _submit_pending_price_change_plan(
+    plan: PendingPriceChangePlan,
+    ctx: QueryContext,
+) -> dict[str, object]:
+    if plan.shop_id != ctx["shop_id"]:
+        return {
+            "task_type": "price_change_submit",
+            "tool_records": [],
+            "answer": AgentAnswer(
+                kind="unsupported",
+                message="该调价方案属于另一家店铺，请切回原店铺后再确认提交。",
+                tool_calls=0,
+            ),
+        }
+    session_prefix = f"agent-session-{ctx['session_id']}" if ctx["session_id"] is not None else "agent-price"
+    idempotency_key = f"{session_prefix}-price-{plan.plan_key}"
+    submission, error_msg, record = await submit_price_change_approval_tool(
+        ctx["session_factory"],
+        organization_id=ctx["organization_id"],
+        shop_id=ctx["shop_id"],
+        shop_name=ctx["shop_name"],
+        actor_id=ctx["actor_id"],
+        business_day=ctx["business_day"],
+        plan=plan,
+        idempotency_key=idempotency_key,
+    )
+    if submission is None:
+        return {
+            "task_type": "price_change_submit",
+            "tool_records": [record],
+            "answer": AgentAnswer(
+                kind="price_change_blocked",
+                message=error_msg or "调价方案校验未通过，无法提交审批。",
+                tool_calls=1,
+                pending_price_change_plan=plan,
+            ),
+        }
+    if submission.replayed:
+        msg = (
+            f"同一调价方案已提交审批，直接返回原审批单 {submission.approval_no}"
+            f"（调价单 {submission.request_no}），未重复建单。"
+        )
+    else:
+        msg = (
+            f"已提交调价人工审批，审批单号 {submission.approval_no}"
+            f"（调价单 {submission.request_no} · ¥{submission.old_price:.2f} → ¥{submission.new_price:.2f}），"
+            "等待本店其他审批员处理。"
+        )
+    return {
+        "task_type": "price_change_submit",
+        "tool_records": [record],
+        "answer": AgentAnswer(
+            kind="price_change_submitted",
+            message=msg,
+            tool_calls=1,
+            price_change_submission=submission,
+            pending_price_change_plan=plan,
+        ),
+    }
+
+
 async def confirm_active_plan(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, object]:
+    pending_price_change = state.get("pending_price_change_plan")
+    if pending_price_change is not None:
+        return await _submit_pending_price_change_plan(pending_price_change, runtime.context)
     pending_refund = state.get("pending_refund_plan")
     if pending_refund is not None:
         return await _submit_pending_refund_plan(pending_refund, runtime.context)
@@ -269,6 +352,35 @@ async def follow_up_refund(state: QueryState, runtime: Runtime[QueryContext]) ->
     }
 
 
+async def follow_up_price_change(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, object]:
+    prior = state["prior_price_change_context"]
+    assert prior is not None
+    ctx = runtime.context
+    target_price = parse_target_price(
+        state["message"],
+        price_hint=prior.target_price,
+        allow_bare_number=(prior.target_price is None),
+    )
+    reason = parse_price_change_reason(
+        state["message"],
+        reason_hint=prior.reason,
+        allow_free_text=(prior.reason is None and target_price is not None),
+    )
+    answer, record = await preview_price_change_tool(
+        ctx["session_factory"],
+        shop_id=ctx["shop_id"],
+        sku_code=prior.sku_code,
+        target_price=target_price,
+        reason=reason,
+    )
+    answer.tool_calls = 1
+    return {
+        "task_type": "price_change_preview",
+        "tool_records": [record],
+        "answer": answer,
+    }
+
+
 async def recognize(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, object]:
     if classify is not _gateway_classify:
         intent = await classify(state["message"])
@@ -282,6 +394,9 @@ async def recognize(state: QueryState, runtime: Runtime[QueryContext]) -> dict[s
 
 
 async def _handle_confirm_plan(state: QueryState, ctx: QueryContext) -> dict[str, object]:
+    pending_price_change = state.get("pending_price_change_plan")
+    if pending_price_change is not None:
+        return await _submit_pending_price_change_plan(pending_price_change, ctx)
     pending_refund = state.get("pending_refund_plan")
     if pending_refund is not None:
         return await _submit_pending_refund_plan(pending_refund, ctx)
@@ -293,7 +408,7 @@ async def _handle_confirm_plan(state: QueryState, ctx: QueryContext) -> dict[str
         "tool_records": [],
         "answer": AgentAnswer(
             kind="clarify",
-            message="当前会话还没有待确认的完整方案，请先生成促销或退款预览并补齐必要参数。",
+            message="当前会话还没有待确认的完整方案，请先生成促销、调价或退款预览并补齐必要参数。",
         ),
     }
 
@@ -381,6 +496,31 @@ async def respond(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str
     if intent.kind == "confirm_plan":
         return await _handle_confirm_plan(state, ctx)
 
+    if intent.kind == "knowledge_qa":
+        qa_result, record = await search_knowledge_tool(
+            ctx["session_factory"],
+            organization_id=ctx["organization_id"],
+            shop_id=ctx["shop_id"],
+            actor_roles=ctx.get("actor_roles", [Role.OPERATOR]),
+            query=state["message"],
+            settings=ctx.get("settings"),
+        )
+        answer_text = await synthesize_knowledge_answer(
+            state["message"],
+            qa_result.citations,
+            settings=ctx.get("settings"),
+        )
+        return {
+            "task_type": "knowledge_qa",
+            "tool_records": [record],
+            "answer": AgentAnswer(
+                kind="knowledge_qa",
+                message=answer_text,
+                tool_calls=1,
+                knowledge=qa_result,
+            ),
+        }
+
     if intent.kind == "order_query":
         return await _handle_order_query(state["message"], intent, ctx)
 
@@ -394,8 +534,8 @@ async def respond(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str
             "answer": AgentAnswer(
                 kind="unsupported",
                 message=(
-                    "当前支持本店单 SKU 近 7 天销量查询、促销预览与送审、订单/异常订单诊断，以及退款预览与送审"
-                    "（审批裁决需由审批员完成，库存操作请在商品运营页执行）。"
+                    "当前支持本店单 SKU 近 7 天销量查询、促销预览与送审、商品调价预览与送审、"
+                    "订单/异常订单诊断，以及退款预览与送审（审批裁决需由审批员完成，库存操作请在商品运营页执行）。"
                 ),
             ),
         }
@@ -412,6 +552,23 @@ async def respond(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str
             ),
         }
     sku_code = code.upper()
+
+    if intent.kind == "price_change":
+        target_price = parse_target_price(state["message"], price_hint=intent.target_price)
+        reason = parse_price_change_reason(state["message"], reason_hint=intent.price_change_reason)
+        answer, record = await preview_price_change_tool(
+            ctx["session_factory"],
+            shop_id=ctx["shop_id"],
+            sku_code=sku_code,
+            target_price=target_price,
+            reason=reason,
+        )
+        answer.tool_calls = 1
+        return {
+            "task_type": "price_change_preview",
+            "tool_records": [record],
+            "answer": answer,
+        }
 
     if intent.kind == "promotion":
         terms = parse_terms(
@@ -495,6 +652,7 @@ builder = StateGraph(QueryState, context_schema=QueryContext)
 builder.add_node("confirm_active_plan", confirm_active_plan)
 builder.add_node("follow_up_promotion", follow_up_promotion)
 builder.add_node("follow_up_refund", follow_up_refund)
+builder.add_node("follow_up_price_change", follow_up_price_change)
 builder.add_node("recognize", recognize)
 builder.add_node("respond", respond)
 builder.add_conditional_edges(
@@ -504,12 +662,14 @@ builder.add_conditional_edges(
         "confirm_active_plan": "confirm_active_plan",
         "follow_up_promotion": "follow_up_promotion",
         "follow_up_refund": "follow_up_refund",
+        "follow_up_price_change": "follow_up_price_change",
         "recognize": "recognize",
     },
 )
 builder.add_edge("confirm_active_plan", END)
 builder.add_edge("follow_up_promotion", END)
 builder.add_edge("follow_up_refund", END)
+builder.add_edge("follow_up_price_change", END)
 builder.add_edge("recognize", "respond")
 builder.add_edge("respond", END)
 query_graph = builder.compile()

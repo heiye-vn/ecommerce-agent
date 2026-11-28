@@ -5,7 +5,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.knowledge import KnowledgeCitationItem
 from app.schemas.orders import SkuSales
+from app.schemas.price_changes import PriceChangeSubmitResponse
 from app.schemas.promotions import PromotionSubmitResponse
 from app.schemas.refunds import RefundSubmitResponse
 
@@ -116,6 +118,57 @@ class OrderQueryResult(BaseModel):
     items: list[OrderDiagnosticItem]
 
 
+class PriceChangeContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shop_id: int = Field(gt=0, le=2_147_483_647)
+    sku_id: int = Field(gt=0, le=2_147_483_647)
+    sku_code: str = Field(pattern=r"^SKU-[A-Z0-9][A-Z0-9_-]*$", max_length=64)
+    target_price: Decimal | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class PendingPriceChangePlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_key: str = Field(min_length=8, max_length=64)
+    shop_id: int = Field(gt=0, le=2_147_483_647)
+    sku_id: int = Field(gt=0, le=2_147_483_647)
+    sku_code: str = Field(pattern=r"^SKU-[A-Z0-9][A-Z0-9_-]*$", max_length=64)
+    new_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    reason: str = Field(min_length=2, max_length=500)
+
+
+class PriceChangePreview(BaseModel):
+    sku_id: int
+    sku_code: str
+    product_name: str
+    sku_status: str
+    current_price: Decimal
+    cost_price: Decimal
+    proposed_price: Decimal
+    change_amount: Decimal
+    change_pct: Decimal
+    reason: str
+    last_old_price: Decimal | None = None
+    last_new_price: Decimal | None = None
+    last_changed_at: datetime | None = None
+    eligible: bool
+    block_reason: str | None = None
+    plan_key: str | None = None
+
+
+class KnowledgeQaResult(BaseModel):
+    citations: list[KnowledgeCitationItem] = Field(default_factory=list)
+    vector_candidates: int = 0
+    lexical_candidates: int = 0
+    vector_degraded: bool = False
+    rerank_degraded: bool = False
+    embedding_model: str | None = None
+    rerank_model: str | None = None
+    isolation_notice: str = "本回答仅解释运营规则，未查询商品实时价格，未提交审批或变更数据。"
+
+
 class AgentQuery(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
@@ -126,7 +179,16 @@ class AgentQuery(BaseModel):
 class QueryIntent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["sales", "promotion", "order_query", "refund", "confirm_plan", "unsupported"]
+    kind: Literal[
+        "sales",
+        "promotion",
+        "price_change",
+        "order_query",
+        "refund",
+        "knowledge_qa",
+        "confirm_plan",
+        "unsupported",
+    ]
     sku_code: str | None = Field(default=None, max_length=64)
     discount: Decimal | None = None
     duration_days: int | None = None
@@ -136,6 +198,8 @@ class QueryIntent(BaseModel):
     refund_amount: Decimal | None = None
     refund_reason: str | None = Field(default=None, max_length=500)
     exception_only: bool = False
+    target_price: Decimal | None = None
+    price_change_reason: str | None = None
 
 
 class AgentAnswer(BaseModel):
@@ -148,11 +212,16 @@ class AgentAnswer(BaseModel):
         "promotion_preview",
         "promotion_blocked",
         "promotion_submitted",
+        "price_change_clarify",
+        "price_change_preview",
+        "price_change_blocked",
+        "price_change_submitted",
         "order_info",
         "refund_clarify",
         "refund_preview",
         "refund_blocked",
         "refund_submitted",
+        "knowledge_qa",
     ]
     message: str
     session_id: int | None = None
@@ -163,8 +232,13 @@ class AgentAnswer(BaseModel):
     promotion_context: PromotionContext | None = None
     pending_plan: PendingPromotionPlan | None = None
     submission: PromotionSubmitResponse | None = None
+    price_change: PriceChangePreview | None = None
+    price_change_context: PriceChangeContext | None = None
+    pending_price_change_plan: PendingPriceChangePlan | None = None
+    price_change_submission: PriceChangeSubmitResponse | None = None
     order_result: OrderQueryResult | None = None
     refund: RefundPreview | None = None
     refund_context: RefundContext | None = None
     pending_refund_plan: PendingRefundPlan | None = None
     refund_submission: RefundSubmitResponse | None = None
+    knowledge: KnowledgeQaResult | None = None

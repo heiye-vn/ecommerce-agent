@@ -9,17 +9,25 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import DEFAULT_SHOP_TIMEZONE
+from app.core.config import AppSettings
 from app.core.errors import AppError
+from app.models.org import Role
 from app.schemas.agent import (
     AgentAnswer,
+    KnowledgeQaResult,
+    PendingPriceChangePlan,
     PendingPromotionPlan,
     PendingRefundPlan,
     PromotionContext,
 )
 from app.schemas.orders import SkuSales
+from app.schemas.price_changes import PriceChangeCreateRequest, PriceChangeSubmitResponse
 from app.schemas.promotions import PromotionCreateRequest, PromotionSubmitResponse
 from app.schemas.refunds import RefundCreateRequest, RefundSubmitResponse
+from app.services.knowledge import build_embedding_client, build_rerank_client, search_knowledge_base
 from app.services.orders import sku_sales
+from app.services.price_change_preview import preview_price_change
+from app.services.price_changes import submit_price_change
 from app.services.promotion_preview import preview_promotion
 from app.services.promotions import submit_promotion
 from app.services.refund_preview import preview_refund, query_orders_for_agent
@@ -402,3 +410,183 @@ async def submit_refund_approval_tool(
                 duration_ms=elapsed_ms,
             ),
         )
+
+
+async def preview_price_change_tool(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    shop_id: int,
+    sku_code: str,
+    target_price: Decimal | None,
+    reason: str | None,
+) -> tuple[AgentAnswer, ToolCallRecord]:
+    started = perf_counter()
+    request_payload = {
+        "shop_id": shop_id,
+        "sku_code": sku_code,
+        "target_price": str(target_price) if target_price is not None else None,
+        "has_reason": bool(reason),
+    }
+    try:
+        async with session_factory() as session:
+            answer = await preview_price_change(
+                session,
+                shop_id=shop_id,
+                sku_code=sku_code,
+                target_price=target_price,
+                reason=reason,
+            )
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        summary: dict[str, Any] = {"kind": answer.kind, "sku_code": sku_code}
+        if answer.price_change is not None:
+            summary.update(
+                {
+                    "eligible": answer.price_change.eligible,
+                    "current_price": str(answer.price_change.current_price),
+                    "proposed_price": str(answer.price_change.proposed_price),
+                }
+            )
+        return answer, ToolCallRecord(
+            tool_name="preview_price_change",
+            request_json=request_payload,
+            response_summary=summary,
+            status="succeeded",
+            duration_ms=elapsed_ms,
+        )
+    except Exception as exc:
+        logger.warning("Agent tool preview_price_change failed: %s", type(exc).__name__)
+        raise
+
+
+async def submit_price_change_approval_tool(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    organization_id: int,
+    shop_id: int,
+    shop_name: str,
+    actor_id: int,
+    business_day: date,
+    plan: PendingPriceChangePlan,
+    idempotency_key: str,
+) -> tuple[PriceChangeSubmitResponse | None, str | None, ToolCallRecord]:
+    """受控提交调价审批工具：只允许创建待审批调价申请与审批单，绝不直接改价或审批通过。"""
+    started = perf_counter()
+    request_payload = {
+        "shop_id": shop_id,
+        "sku_code": plan.sku_code,
+        "new_price": str(plan.new_price),
+        "idempotency_key": idempotency_key,
+    }
+    try:
+        async with session_factory.begin() as session:
+            result = await submit_price_change(
+                session,
+                organization_id=organization_id,
+                shop_id=shop_id,
+                shop_name=shop_name,
+                actor_id=actor_id,
+                business_day=business_day,
+                payload=PriceChangeCreateRequest(
+                    sku_code=plan.sku_code,
+                    new_price=plan.new_price,
+                    reason=plan.reason,
+                ),
+                idempotency_key=idempotency_key,
+            )
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        return (
+            result,
+            None,
+            ToolCallRecord(
+                tool_name="submit_price_change_approval",
+                request_json=request_payload,
+                response_summary={
+                    "request_no": result.request_no,
+                    "approval_no": result.approval_no,
+                    "status": result.status,
+                    "replayed": result.replayed,
+                },
+                status="succeeded",
+                duration_ms=elapsed_ms,
+            ),
+        )
+    except AppError as exc:
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        return (
+            None,
+            exc.message,
+            ToolCallRecord(
+                tool_name="submit_price_change_approval",
+                request_json=request_payload,
+                response_summary={"code": exc.code},
+                status="failed",
+                error=exc.message,
+                duration_ms=elapsed_ms,
+            ),
+        )
+
+
+async def search_knowledge_tool(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    organization_id: int,
+    shop_id: int,
+    actor_roles: list[Role],
+    query: str,
+    settings: AppSettings | None = None,
+    top_n: int = 4,
+) -> tuple[KnowledgeQaResult, ToolCallRecord]:
+    """只读混合检索运营/售后规则文档，严禁写入业务或审批数据。"""
+    started = perf_counter()
+    resolved_settings = settings if settings is not None else AppSettings.load()
+    embedding_client = (
+        build_embedding_client(resolved_settings) if resolved_settings.dashscope_api_key else None
+    )
+    rerank_client = (
+        build_rerank_client(resolved_settings) if resolved_settings.dashscope_api_key else None
+    )
+    request_payload = {
+        "shop_id": shop_id,
+        "query": query[:200],
+        "top_n": top_n,
+    }
+    try:
+        async with session_factory() as session:
+            search_res = await search_knowledge_base(
+                session,
+                organization_id=organization_id,
+                shop_id=shop_id,
+                actor_roles=actor_roles,
+                query=query,
+                embedding_client=embedding_client,
+                rerank_client=rerank_client,
+                embedding_model=resolved_settings.dashscope_embedding_model,
+                embedding_dim=resolved_settings.dashscope_embedding_dimensions,
+                top_n=top_n,
+            )
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        qa_result = KnowledgeQaResult(
+            citations=search_res.items,
+            vector_candidates=search_res.vector_candidates,
+            lexical_candidates=search_res.lexical_candidates,
+            vector_degraded=search_res.vector_degraded,
+            rerank_degraded=search_res.rerank_degraded,
+            embedding_model=search_res.embedding_model,
+            rerank_model=search_res.rerank_model,
+        )
+        return qa_result, ToolCallRecord(
+            tool_name="search_knowledge",
+            request_json=request_payload,
+            response_summary={
+                "hit_count": len(search_res.items),
+                "doc_nos": [item.doc_no for item in search_res.items],
+                "vector_candidates": search_res.vector_candidates,
+                "lexical_candidates": search_res.lexical_candidates,
+                "rerank_degraded": search_res.rerank_degraded,
+            },
+            status="succeeded",
+            duration_ms=elapsed_ms,
+        )
+    except Exception as exc:
+        logger.warning("Agent tool search_knowledge failed: %s", type(exc).__name__)
+        raise

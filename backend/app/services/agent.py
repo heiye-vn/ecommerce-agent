@@ -8,8 +8,10 @@ from app.core.errors import AppError
 from app.models.agent import AgentMessage, AgentSession, AgentTask, AgentToolCall
 from app.schemas.agent import (
     AgentAnswer,
+    PendingPriceChangePlan,
     PendingPromotionPlan,
     PendingRefundPlan,
+    PriceChangeContext,
     PromotionContext,
     RefundContext,
 )
@@ -22,6 +24,8 @@ class LoadedSessionContext:
     pending_plan: PendingPromotionPlan | None = None
     prior_refund: RefundContext | None = None
     pending_refund_plan: PendingRefundPlan | None = None
+    prior_price_change: PriceChangeContext | None = None
+    pending_price_change_plan: PendingPriceChangePlan | None = None
     cross_shop: bool = False
 
 
@@ -61,6 +65,8 @@ async def load_session_context(
     pending_plan: PendingPromotionPlan | None = None
     prior_refund: RefundContext | None = None
     pending_refund_plan: PendingRefundPlan | None = None
+    prior_price_change: PriceChangeContext | None = None
+    pending_price_change_plan: PendingPriceChangePlan | None = None
     if agent_session.context_json:
         if "promotion_context" in agent_session.context_json:
             prior_promotion = PromotionContext.model_validate(
@@ -78,12 +84,22 @@ async def load_session_context(
             pending_refund_plan = PendingRefundPlan.model_validate(
                 agent_session.context_json["pending_refund_plan"]
             )
+        if "price_change_context" in agent_session.context_json:
+            prior_price_change = PriceChangeContext.model_validate(
+                agent_session.context_json["price_change_context"]
+            )
+        if "pending_price_change_plan" in agent_session.context_json:
+            pending_price_change_plan = PendingPriceChangePlan.model_validate(
+                agent_session.context_json["pending_price_change_plan"]
+            )
     return LoadedSessionContext(
         session_id=agent_session.id,
         prior_promotion=prior_promotion,
         pending_plan=pending_plan,
         prior_refund=prior_refund,
         pending_refund_plan=pending_refund_plan,
+        prior_price_change=prior_price_change,
+        pending_price_change_plan=pending_price_change_plan,
     )
 
 
@@ -124,6 +140,10 @@ async def record_turn(
         next_context["refund_context"] = answer.refund_context.model_dump(mode="json")
     if answer.pending_refund_plan is not None:
         next_context["pending_refund_plan"] = answer.pending_refund_plan.model_dump(mode="json")
+    if answer.price_change_context is not None:
+        next_context["price_change_context"] = answer.price_change_context.model_dump(mode="json")
+    if answer.pending_price_change_plan is not None:
+        next_context["pending_price_change_plan"] = answer.pending_price_change_plan.model_dump(mode="json")
     agent_session.context_json = next_context or None
 
     session.add_all([
@@ -141,12 +161,18 @@ async def record_turn(
         plan_payload = answer.submission.model_dump(mode="json")
     elif answer.refund_submission is not None:
         plan_payload = answer.refund_submission.model_dump(mode="json")
+    elif answer.price_change_submission is not None:
+        plan_payload = answer.price_change_submission.model_dump(mode="json")
     elif answer.promotion is not None:
         plan_payload = answer.promotion.model_dump(mode="json")
+    elif answer.price_change is not None:
+        plan_payload = answer.price_change.model_dump(mode="json")
     elif answer.refund is not None:
         plan_payload = answer.refund.model_dump(mode="json")
     elif answer.order_result is not None:
         plan_payload = answer.order_result.model_dump(mode="json")
+    elif answer.knowledge is not None:
+        plan_payload = answer.knowledge.model_dump(mode="json")
     elif answer.sales is not None:
         plan_payload = answer.sales.model_dump(mode="json")
 

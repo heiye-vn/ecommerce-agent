@@ -47,6 +47,8 @@ async def query_agent(
                 "pending_plan": loaded.pending_plan,
                 "prior_refund_context": loaded.prior_refund,
                 "pending_refund_plan": loaded.pending_refund_plan,
+                "prior_price_change_context": loaded.prior_price_change,
+                "pending_price_change_plan": loaded.pending_price_change_plan,
             },
             context={
                 "organization_id": shop.organization_id,
@@ -54,6 +56,7 @@ async def query_agent(
                 "shop_name": shop.name,
                 "timezone_name": shop.timezone,
                 "actor_id": shop.user_id,
+                "actor_roles": shop.roles,
                 "session_id": loaded.session_id,
                 "business_day": business_day,
                 "session_factory": session_factory,
