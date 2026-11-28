@@ -47,14 +47,22 @@
 
 ## 三、复用本地服务的桌面端浏览器核验
 
-遵循不重复启停用户既有进程的原则，直接复用本机运行中的 `http://127.0.0.1:7630`（Vite 前端开发服务）与 `http://127.0.0.1:7620`（当前尚处于阶段 3 代码版本的 `uvicorn` 后端进程）完成只读浏览器核查（经主机 `BROWSER_HOST_FACTS` 确认访问了 `http://127.0.0.1:7630` 与 `http://127.0.0.1:7620`、`blocked_origins: none`，并在最终 `1440x900` 视口人工查验截图）：
+遵循不重复启停用户既有进程的原则，在后端 `uvicorn`（`127.0.0.1:7620`）与 `app.workers.consumer` 重启就绪后，直接复用本机运行中的 `http://127.0.0.1:7630`（Vite 前端开发服务）与 `http://127.0.0.1:7620`（阶段 4 最新代码）完成只读浏览器复验（经主机 `BROWSER_HOST_FACTS` 确认访问了 `http://127.0.0.1:7620` 与 `http://127.0.0.1:7630`、`blocked_origins: none`，并在最终 `1440x900` 视口人工查验截图）：
 
+- **OpenAPI 路由全量就绪核验（`http://127.0.0.1:7620/openapi.json`）**：
+  - 返回 `200 OK`，总计注册 `32` 条路径，阶段 4 新增全部 `6` 条路径（`7` 个接口操作）均已暴露：
+    - `GET`、`POST` `/api/shops/{shop_id}/refunds`
+    - `GET` `/api/shops/{shop_id}/refunds/{refund_id}`
+    - `POST` `/api/shops/{shop_id}/refunds/{refund_id}/cancel`
+    - `GET` `/api/shops/{shop_id}/inventory`
+    - `GET` `/api/shops/{shop_id}/inventory/movements`
+    - `POST` `/api/shops/{shop_id}/inventory/{sku_code}/movements`
+- **Vite 代理就绪探针核验（`http://127.0.0.1:7630/api/health/ready`）**：
+  - 返回 `200 OK`，响应 JSON 为 `{"status":"ok","service":"commerce-agent-backend","checks":{"postgresql":"ok","redis":"ok","rabbitmq":"ok"}}`。
 - **未登录受保护路由校验**：
-  - 访问 `http://127.0.0.1:7630/orders/refunds/1` 与 `http://127.0.0.1:7630/orders` 均返回 `200 OK` 并自动重定向至 `http://127.0.0.1:7630/login`；
+  - 访问 `http://127.0.0.1:7630/catalog?tab=inventory` 与 `http://127.0.0.1:7630/orders/refunds/1`（此前基线核验亦覆盖 `/orders`）均返回 `200 OK` 并自动重定向至 `http://127.0.0.1:7630/login`；
   - 仅出现预期的未登录态刷新检查请求 `POST http://127.0.0.1:7630/api/auth/refresh -> 401 Unauthorized`，控制台错误与未捕获页面错误均为 `0`。
 - **三大桌面视口布局核查（`http://127.0.0.1:7630/login`）**：
   - **`1440x900`**：`html` / `body` / `#root` 边界与视口严格一致（`1440x900`），滚轮横纵向位移 `dx = 0, dy = 0`，无离屏/截断元素；最终 `1440x900` 截图确认奶油白画布、左侧芦荟绿说明区与右侧纯黑胶囊主按钮符合 `DESIGN.md`。
   - **`1920x1080`**：`html` / `body` / `#root` 边界为 `1920x1080`，滚轮横纵向位移 `dx = 0, dy = 0`，无溢出与裁切。
   - **`2560x1440`**：`html` / `body` / `#root` 边界为 `2560x1440`，滚轮横纵向位移 `dx = 0, dy = 0`，无溢出与裁切。
-- **后端进程状态客观说明（`http://127.0.0.1:7620/openapi.json`）**：
-  - 只读读取当前 `uvicorn` 进程的 `/openapi.json` 返回 `200 OK`，当前已注册 `26` 条路径（尚为重启前的阶段 3 进程），暂未包含 `/refunds` 与 `/inventory`；本地验证阶段 4 线上联调前，需人工重启本地 `uvicorn` 后端进程与 `app.workers.consumer` 消费者进程以加载阶段 4 路由及 `commerce.jobs.refund` 队列监听。
