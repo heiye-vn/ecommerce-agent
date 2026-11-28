@@ -94,7 +94,7 @@ class Job(Base):
             name="ck_jobs_status",
         ),
         CheckConstraint(
-            "job_type IN ('promotion_schedule', 'promotion_activate', 'promotion_complete')",
+            "job_type IN ('promotion_schedule', 'promotion_activate', 'promotion_complete', 'refund_execute')",
             name="ck_jobs_type",
         ),
         CheckConstraint(
@@ -165,7 +165,7 @@ class Notification(Base):
             name="fk_notifications_shop_organization",
         ),
         Index("ix_notifications_user_shop_read", "user_id", "shop_id", "is_read", "created_at"),
-        CheckConstraint("category IN ('approval', 'promotion', 'job')", name="ck_notifications_category"),
+        CheckConstraint("category IN ('approval', 'promotion', 'job', 'refund')", name="ck_notifications_category"),
     )
 
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"))

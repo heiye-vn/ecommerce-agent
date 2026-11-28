@@ -62,13 +62,32 @@ class Inventory(Base):
 class InventoryMovement(Base):
     __tablename__ = "inventory_movements"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["shop_id", "sku_id"],
+            ["skus.shop_id", "skus.id"],
+            name="fk_inventory_movements_shop_sku",
+        ),
         Index("ix_inventory_movements_sku_created", "sku_id", "created_at"),
+        Index("ix_inventory_movements_shop_sku_created", "shop_id", "sku_id", "created_at"),
+        CheckConstraint(
+            "movement_type IN ('opening_balance', 'reserve', 'release', 'fulfill', 'restock', 'adjust')",
+            name="ck_inventory_movements_type",
+        ),
     )
 
+    shop_id: Mapped[int | None]
     sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"))
     movement_type: Mapped[str] = mapped_column(String(32))
     quantity: Mapped[int]
+    available_delta: Mapped[int] = mapped_column(server_default="0")
+    reserved_delta: Mapped[int] = mapped_column(server_default="0")
+    before_available: Mapped[int | None]
+    after_available: Mapped[int | None]
+    before_reserved: Mapped[int | None]
+    after_reserved: Mapped[int | None]
     reference_id: Mapped[str] = mapped_column(String(64))
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    note: Mapped[str | None] = mapped_column(String(255))
 
 
 class PriceHistory(Base):
@@ -95,6 +114,10 @@ class Order(Base):
             name="ck_orders_status",
         ),
         CheckConstraint(
+            "fulfillment_status IN ('pending_shipment', 'shipped', 'delivered', 'cancelled')",
+            name="ck_orders_fulfillment_status",
+        ),
+        CheckConstraint(
             "paid_amount >= 0 AND (status <> 'paid' OR paid_at IS NOT NULL)", name="ck_orders_payment",
         ),
     )
@@ -102,6 +125,8 @@ class Order(Base):
     shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id"))
     order_no: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(20))
+    fulfillment_status: Mapped[str] = mapped_column(String(32), server_default="pending_shipment")
+    exception_type: Mapped[str | None] = mapped_column(String(64))
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

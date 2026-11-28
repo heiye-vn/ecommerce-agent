@@ -61,6 +61,7 @@ def test_initial_migration_can_be_rolled_back_and_reapplied(
         "agent_tool_calls",
         "promotions",
         "promotion_items",
+        "refunds",
         "approvals",
         "operation_requests",
         "audit_logs",
