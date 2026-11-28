@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Header, Path
 
 from app.api.auth import AuthorizedShop, Clock, Database, OperatorShop, reject_cross_origin
 from app.core.errors import AppError
+from app.schemas.analytics import PromotionReviewResponse
 from app.schemas.promotions import (
     PromotionCreateRequest,
     PromotionDetail,
@@ -11,6 +12,7 @@ from app.schemas.promotions import (
     PromotionSubmitResponse,
     PromotionSummary,
 )
+from app.services import analytics as analytics_service
 from app.services import promotions as promotion_service
 
 router = APIRouter(prefix="/api/shops/{shop_id}/promotions", tags=["promotions"])
@@ -40,6 +42,17 @@ async def create_promotion(
         business_day=clock.business_date(shop.timezone),
         payload=payload,
         idempotency_key=idempotency_key,
+    )
+
+
+@router.get("/{promotion_id}/review")
+async def get_promotion_review_route(
+    shop: AuthorizedShop,
+    session: Database,
+    promotion_id: Annotated[int, Path(gt=0, le=2_147_483_647)],
+) -> PromotionReviewResponse:
+    return await analytics_service.get_promotion_review(
+        session, shop_id=shop.id, promotion_id=promotion_id
     )
 
 

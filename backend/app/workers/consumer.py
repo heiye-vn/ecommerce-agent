@@ -87,6 +87,8 @@ async def run_consumer(prefetch_count: int = 10) -> None:
             queues: list[AbstractQueue] = [topology.queue]
             if topology.refund_queue is not None:
                 queues.append(topology.refund_queue)
+            if topology.price_change_queue is not None:
+                queues.append(topology.price_change_queue)
             logger.info("Consumer worker started: queues=%s", [q.name for q in queues])
 
             async def _consume(queue: AbstractQueue) -> None:

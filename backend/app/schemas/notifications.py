@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-NotificationCategory = Literal["approval", "promotion", "job", "refund"]
+NotificationCategory = Literal["approval", "promotion", "job", "refund", "price_change"]
 
 
 class NotificationItem(BaseModel):

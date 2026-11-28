@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
-from app.models import Approval, Promotion, Refund, Shop, User
+from app.models import Approval, PriceChangeRequest, Promotion, Refund, Shop, User
 from app.models.org import Role
 from app.schemas.approvals import (
     ApprovalDecisionResponse,
@@ -17,6 +17,7 @@ from app.schemas.approvals import (
 from app.services.audit import list_resource_audit_logs, write_audit_log
 from app.services.jobs import enqueue_job_with_outbox, run_loaded_job
 from app.services.notifications import create_notification
+from app.services.price_changes import assert_price_change_transition
 from app.services.promotions import assert_promotion_transition
 from app.services.refunds import assert_refund_transition
 
@@ -44,6 +45,13 @@ def _extract_snapshot_meta(approval: Approval) -> tuple[str, str, str | None]:
         reason = str(snapshot.get("reason") or "")
         resource_name = f"{order_no} · {reason}" if order_no and reason else (order_no or reason)
         snapshot_amount = str(snapshot["amount"]) if "amount" in snapshot else None
+        return resource_no, resource_name, snapshot_amount
+    if approval.resource_type == "price_change":
+        resource_no = str(snapshot.get("request_no") or approval.resource_id)
+        sku_code = str(snapshot.get("sku_code") or "")
+        product_name = str(snapshot.get("product_name") or "")
+        resource_name = f"{sku_code} · {product_name}" if sku_code and product_name else (sku_code or product_name)
+        snapshot_amount = str(snapshot["new_price"]) if "new_price" in snapshot else None
         return resource_no, resource_name, snapshot_amount
 
     resource_no = str(snapshot.get("promotion_no") or approval.resource_id)
@@ -181,6 +189,15 @@ async def get_approval_detail(
         if refund is not None:
             resource_status = refund.status
             resource_failure_reason = refund.failure_reason
+    elif approval.resource_type == "price_change":
+        price_req = await session.scalar(
+            select(PriceChangeRequest).where(
+                PriceChangeRequest.shop_id == shop_id, PriceChangeRequest.id == approval.resource_id
+            )
+        )
+        if price_req is not None:
+            resource_status = price_req.status
+            resource_failure_reason = price_req.failure_reason
 
     audit_logs = await list_resource_audit_logs(
         session,
@@ -501,6 +518,154 @@ async def _decide_refund_approval(
     )
 
 
+async def _decide_price_change_approval(
+    session: AsyncSession,
+    *,
+    organization_id: int,
+    shop_id: int,
+    approval: Approval,
+    actor_id: int,
+    actor_roles: list[Role],
+    decision: str,
+    business_now: datetime,
+    execute_schedule: bool,
+) -> ApprovalDecisionResponse:
+    req = await session.scalar(
+        select(PriceChangeRequest)
+        .where(PriceChangeRequest.shop_id == shop_id, PriceChangeRequest.id == approval.resource_id)
+        .with_for_update()
+    )
+    if req is None:
+        raise AppError(404, "PRICE_CHANGE_NOT_FOUND", "未找到关联的调价申请。", detail="Price change not found")
+
+    snapshot = approval.payload_snapshot or {}
+    sku_code = str(snapshot.get("sku_code") or req.sku_id)
+    before_state = {"approval_status": "pending", "price_change_status": req.status}
+
+    if decision == "reject":
+        assert_price_change_transition(req.status, "rejected")
+        approval.status = "rejected"
+        req.status = "rejected"
+        await write_audit_log(
+            session,
+            organization_id=organization_id,
+            shop_id=shop_id,
+            actor_id=actor_id,
+            action="approval.rejected",
+            resource_type="price_change",
+            resource_id=req.id,
+            before_json=before_state,
+            after_json={
+                "approval_status": "rejected",
+                "price_change_status": "rejected",
+                "comment": approval.decision_comment,
+            },
+            metadata_json={"approval_id": approval.id, "approval_no": approval.approval_no},
+        )
+        await create_notification(
+            session,
+            organization_id=organization_id,
+            shop_id=shop_id,
+            user_id=approval.requester_id,
+            category="approval",
+            title=f"审批单 {approval.approval_no} 已驳回",
+            content=f"调价申请 {req.request_no}（{sku_code}）被驳回：{approval.decision_comment}。",
+            resource_type="price_change",
+            resource_id=req.id,
+        )
+        detail = await get_approval_detail(
+            session, shop_id=shop_id, approval_id=approval.id, actor_id=actor_id, actor_roles=actor_roles
+        )
+        assert detail is not None
+        return ApprovalDecisionResponse(
+            approval=detail,
+            execution_status="rejected",
+            execution_message="已驳回该调价申请，商品当前售价保持不变。",
+        )
+
+    assert_price_change_transition(req.status, "approved")
+    approval.status = "approved"
+    req.status = "approved"
+    await write_audit_log(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        actor_id=actor_id,
+        action="approval.approved",
+        resource_type="price_change",
+        resource_id=req.id,
+        before_json=before_state,
+        after_json={
+            "approval_status": "approved",
+            "price_change_status": "approved",
+            "comment": approval.decision_comment,
+        },
+        metadata_json={"approval_id": approval.id, "approval_no": approval.approval_no},
+    )
+    await create_notification(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        user_id=approval.requester_id,
+        category="approval",
+        title=f"审批单 {approval.approval_no} 已批准",
+        content=(
+            f"调价申请 {req.request_no}（{sku_code} · ¥{req.old_price:.2f} → ¥{req.new_price:.2f}）已获批，"
+            "即将复核售价并执行调价。"
+        ),
+        resource_type="price_change",
+        resource_id=req.id,
+    )
+
+    job_payload: dict[str, Any] = {
+        "price_change_id": req.id,
+        "request_no": req.request_no,
+        "sku_code": sku_code,
+        "old_price": str(req.old_price),
+        "new_price": str(req.new_price),
+        "reason": req.reason,
+        "approval_id": approval.id,
+        "approval_no": approval.approval_no,
+        "requester_id": approval.requester_id,
+        "actor_id": actor_id,
+    }
+    job, _ = await enqueue_job_with_outbox(
+        session,
+        organization_id=organization_id,
+        shop_id=shop_id,
+        job_type="price_change_execute",
+        resource_type="price_change",
+        resource_id=req.id,
+        resource_version=approval.resource_version,
+        idempotency_key=f"price-change-execute-{req.id}",
+        payload=job_payload,
+        business_day=business_now.date(),
+        emit_outbox=not execute_schedule,
+    )
+
+    if execute_schedule:
+        execution_status, execution_message = await run_loaded_job(
+            session,
+            job=job,
+            business_now=business_now,
+        )
+    else:
+        execution_status = "queued"
+        execution_message = f"审批已通过，调价执行任务 {job.job_no} 已入队等待后台复核并生效。"
+
+    detail = await get_approval_detail(
+        session, shop_id=shop_id, approval_id=approval.id, actor_id=actor_id, actor_roles=actor_roles
+    )
+    assert detail is not None
+    return ApprovalDecisionResponse(
+        approval=detail,
+        execution_status=execution_status,
+        execution_message=execution_message,
+        job_id=job.id,
+        job_no=job.job_no,
+    )
+
+
 async def decide_approval(
     session: AsyncSession,
     *,
@@ -576,6 +741,18 @@ async def decide_approval(
         )
     if approval.resource_type == "refund":
         return await _decide_refund_approval(
+            session,
+            organization_id=organization_id,
+            shop_id=shop_id,
+            approval=approval,
+            actor_id=actor_id,
+            actor_roles=actor_roles,
+            decision=decision,
+            business_now=business_now,
+            execute_schedule=execute_schedule,
+        )
+    if approval.resource_type == "price_change":
+        return await _decide_price_change_approval(
             session,
             organization_id=organization_id,
             shop_id=shop_id,
