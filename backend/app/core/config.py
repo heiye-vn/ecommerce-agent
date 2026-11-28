@@ -6,6 +6,11 @@ from app.core.db import load_env_file, read_setting
 from app.core.security import AuthSettings
 
 DEFAULT_SANDBOX_BUSINESS_DATE = date(2026, 11, 21)
+DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_DASHSCOPE_EMBEDDING_MODEL = "qwen3.7-text-embedding-flash"
+DEFAULT_DASHSCOPE_EMBEDDING_DIMENSIONS = 1024
+DEFAULT_DASHSCOPE_RERANK_MODEL = "qwen3.7-text-rerank"
+DEFAULT_DASHSCOPE_RERANK_URL = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
 SUPPORTED_LLM_PROVIDERS = ("dashscope", "openai_relay")
 StructuredOutputMode = Literal["function_calling", "json_schema"]
 AsyncExecutionMode = Literal["outbox", "inline"]
@@ -50,6 +55,12 @@ class AppSettings:
     llm_channels: dict[str, LLMChannelSettings]
     sandbox_business_date: date | None
     async_execution_mode: AsyncExecutionMode = "outbox"
+    dashscope_base_url: str = DEFAULT_DASHSCOPE_BASE_URL
+    dashscope_api_key: str | None = None
+    dashscope_embedding_model: str = DEFAULT_DASHSCOPE_EMBEDDING_MODEL
+    dashscope_embedding_dimensions: int = DEFAULT_DASHSCOPE_EMBEDDING_DIMENSIONS
+    dashscope_rerank_model: str = DEFAULT_DASHSCOPE_RERANK_MODEL
+    dashscope_rerank_url: str = DEFAULT_DASHSCOPE_RERANK_URL
 
     @classmethod
     def load(cls) -> "AppSettings":
@@ -87,6 +98,11 @@ class AppSettings:
         else:
             sandbox_business_date = DEFAULT_SANDBOX_BUSINESS_DATE
 
+        raw_dim = (get("DASHSCOPE_EMBEDDING_DIMENSIONS") or "").strip()
+        embedding_dimensions = (
+            int(raw_dim) if raw_dim.isdigit() and int(raw_dim) > 0 else DEFAULT_DASHSCOPE_EMBEDDING_DIMENSIONS
+        )
+
         return cls(
             database_url=get("DATABASE_URL"),
             redis_url=get("REDIS_URL"),
@@ -97,6 +113,12 @@ class AppSettings:
             llm_channels=channels,
             sandbox_business_date=sandbox_business_date,
             async_execution_mode=_normalize_async_mode(get("ASYNC_EXECUTION_MODE")),
+            dashscope_base_url=(get("DASHSCOPE_BASE_URL") or DEFAULT_DASHSCOPE_BASE_URL).strip(),
+            dashscope_api_key=(get("DASHSCOPE_API_KEY") or "").strip() or None,
+            dashscope_embedding_model=(get("DASHSCOPE_EMBEDDING_MODEL") or DEFAULT_DASHSCOPE_EMBEDDING_MODEL).strip(),
+            dashscope_embedding_dimensions=embedding_dimensions,
+            dashscope_rerank_model=(get("DASHSCOPE_RERANK_MODEL") or DEFAULT_DASHSCOPE_RERANK_MODEL).strip(),
+            dashscope_rerank_url=(get("DASHSCOPE_RERANK_URL") or DEFAULT_DASHSCOPE_RERANK_URL).strip(),
         )
 
     def require_database_url(self) -> str:
